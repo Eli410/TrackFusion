@@ -6,7 +6,7 @@ import imageio.v3 as iio
 from pygame import mixer
 from math import floor
 from moviepy.editor import VideoFileClip
-from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QLineEdit, QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, QHBoxLayout, QPushButton
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPixmap, QKeyEvent, QImage
 
@@ -21,7 +21,10 @@ class MainWindow(QWidget):
 
         leftScreenLayout = QVBoxLayout()
 
-        #Create searchBar and searchButton
+        ### Create searchBar and searchButton
+        ###
+        ###
+        ###
         searchLayout = QHBoxLayout()
 
         self.searchBar = QLineEdit(self)
@@ -48,7 +51,10 @@ class MainWindow(QWidget):
 
         searchLayout.addWidget(self.searchButton)
 
-        #Create videoLabel that holds pixelMap, connect it to timed update function
+        ### Create videoLabel that holds pixelMap, connect it to timed update function
+        ###
+        ###
+        ###
         self.videoLabel = QLabel(self)
         self.isRenderingVideo = False
         self.video = None
@@ -59,10 +65,11 @@ class MainWindow(QWidget):
         
         self.renderVideoThread = threading.Thread(target=self.renderVideo)
         self.renderVideoThread.start()
-        self.timer.timeout.connect(self.start_render_video_thread)
-        self.timer.start(1)  # 1000 ms = 1 s, 30 fps
+        self.timer.timeout.connect(self.startRenderVideoThread)
 
         #Create layout that holds control buttons
+        ###
+        ###
         ###
         videoControlLayout = QHBoxLayout()
 
@@ -81,14 +88,19 @@ class MainWindow(QWidget):
         videoControlLayout.addWidget(self.playButton)
         videoControlLayout.addWidget(self.pauseButton)
 
-
-        #Create lyricsLabel that holds lyrics
+        ### Create lyricsLabel that holds lyrics
+        ###
+        ###
+        ###
         lyricBoxLayout = QVBoxLayout()
 
-        self.lyricBox = QLineEdit(self)
+        self.lyricBox = QTextEdit(self)
         self.lyricBox.setFixedWidth(300)
         self.lyricBox.setFixedHeight(600)
         self.lyricBox.setReadOnly(True)
+        self.isRenderingLyrics = False
+        self.lyrics = None
+        self.lyricIndex = None
 
         self.lyricBox.setStyleSheet("""
             QLineEdit {
@@ -102,7 +114,16 @@ class MainWindow(QWidget):
         """)
         lyricBoxLayout.addWidget(self.lyricBox)
         
-        #Show screen
+        # self.renderVideoThread = threading.Thread(target=self.renderLyrics)
+        # self.renderVideoThread.start()
+        # self.timer.timeout.connect(self.startRenderLyricsThread)
+        self.timer.timeout.connect(self.renderLyrics)
+        self.timer.start(1)
+        
+        ### Show screen
+        ###
+        ###
+        ###
         leftScreenLayout.addLayout(searchLayout)
         leftScreenLayout.addWidget(self.videoLabel)
         leftScreenLayout.addLayout(videoControlLayout)
@@ -112,7 +133,7 @@ class MainWindow(QWidget):
 
         self.setLayout(screenLayout)
 
-    def start_render_video_thread(self):
+    def startRenderVideoThread(self):
         if not self.renderVideoThread.is_alive():
             self.renderVideoThread = threading.Thread(target=self.renderVideo)
             self.renderVideoThread.start()
@@ -122,17 +143,32 @@ class MainWindow(QWidget):
         mixer.music.unload()
 
         self.searchBar.setText("https://www.youtube.com/watch?v=B9synWjqBn8")
-        # print(self.searchBar.text())
         youTubeLinkRegex = re.compile(r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|embed/|v/)?([A-Za-z0-9_-]{11})(&.*)*$') #Test Later
         if (youTubeLinkRegex.fullmatch(self.searchBar.text())):
             title = "B9synWjqBn8"
+
+            ### Audio setup
             mixer.music.load(f"tests/{title}.mp3")
             mixer.music.play()
+
+            ### Video setup
             self.isRenderingVideo = True
             self.videoFPS = iio.immeta(f"tests/{title}.mp4", exclude_applied=False).get('fps', None)
             self.video = cv2.VideoCapture(f"tests/{title}.mp4")
-            print(self.videoFPS)
 
+            ### Lyric setup
+            self.isRenderingLyrics = True
+            with open(f"tests/{title}.txt") as lyricFile:
+                tempLyrics = lyricFile.read().splitlines()
+                for i in range(len(tempLyrics)):
+                    minutes, seconds = tempLyrics[i][1:9].split(":")
+                    minutes, seconds = int(minutes), float(seconds)
+                    milliseconds = int(floor((minutes * 60 + seconds) * 1000))
+                    tempLyrics[i] = (milliseconds, tempLyrics[i][11:])
+                    self.lyrics = tempLyrics
+                    self.lyricIndex = 0
+                    self.updateLyrics()
+    
     def onPlayButtonClicked(self):
         mixer.music.unpause()
         self.isRenderingVideo = True
@@ -154,8 +190,24 @@ class MainWindow(QWidget):
             frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
             frameImagePixmap = QPixmap.fromImage(frameImage)
             self.videoLabel.setPixmap(frameImagePixmap)
-
-
+    
+    def renderLyrics(self):
+        if self.isRenderingLyrics:
+            if self.lyricIndex < len(self.lyrics) - 1:
+                if mixer.music.get_pos() >= self.lyrics[self.lyricIndex+1][0]:
+                    self.lyricIndex = self.lyricIndex + 1
+                    self.updateLyrics()
+        
+    def updateLyrics(self):
+        if self.lyricIndex == len(self.lyrics) - 1:
+            self.lyricBox.setText(self.lyrics[self.lyricIndex][1] + '\n' + '\n')
+        elif self.lyricIndex == len(self.lyrics) - 2:
+            self.lyricBox.setText(self.lyrics[self.lyricIndex+1][1] + '\n' + '\n' +
+                                  self.lyrics[self.lyricIndex+2][1] + '\n' + '\n')
+        else: 
+            self.lyricBox.setText(self.lyrics[self.lyricIndex][1] + '\n' + '\n' +
+                                  self.lyrics[self.lyricIndex+1][1] + '\n' + '\n' +
+                                  self.lyrics[self.lyricIndex+2][1] + '\n' + '\n')
 
 app = QApplication(sys.argv)
 mixer.init()
