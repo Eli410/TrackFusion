@@ -10,8 +10,10 @@ import time
 class AudioStreamer:
     def __init__(self, source, root_dir):
         self.tracks = [
-            # "vocals",
-            'no_vocals',
+            'drums',
+            'bass',
+            'other',
+            "vocals",
         ]
         self.source = source
         self.root_dir = root_dir
@@ -33,7 +35,7 @@ class AudioStreamer:
 
     def start_processing(self):
         os.makedirs(self.root_dir, exist_ok=True)
-        self.child = subprocess.Popen(["python", "processing.py", self.source], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.child = subprocess.Popen(["python", "processing.py", self.source])#, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def read_audio_file(self, file_path):
         """Reads an audio file and returns numpy array and sample rate"""
@@ -41,9 +43,10 @@ class AudioStreamer:
         return data, samplerate
 
     def _stream_audio(self):
+        print("Streaming audio...")
         """Internal method to stream audio in a separate thread."""
         # Wait until the first chunk is available
-        while not (os.path.exists(f"{self.root_dir}/chunk_{self.i}") and len(os.listdir(f"{self.root_dir}/chunk_{self.i}")) == 3):
+        while not (os.path.exists(f"{self.root_dir}/chunk_{self.i}") and len(os.listdir(f"{self.root_dir}/chunk_{self.i}")) == 5):
             if self.stop_event.is_set():
                 return
             time.sleep(0.1)
@@ -70,42 +73,63 @@ class AudioStreamer:
                         self.total_paused_time += paused_duration
                         self.pause_start_time = None
 
-                # Load and overlay each track in the tracks list
-                combined = None
+                # Load and store each track in the tracks list
+                track_data = {}
                 sample_rate = None
-                for track in self.tracks:
-                    file_path = f"{self.root_dir}/chunk_{self.i}/{track}.mp3"
+                num_channels = None
+                chunk_path = f"{self.root_dir}/chunk_{self.i}"
+                if not os.path.exists(chunk_path):
+                    # Wait for the chunk to be available
+                    while not os.path.exists(chunk_path):
+                        if self.stop_event.is_set():
+                            break
+                        time.sleep(0.1)
+                for track_file in os.listdir(chunk_path):
+                    track_name = track_file.split('.')[0]
+                    file_path = f"{chunk_path}/{track_file}"
                     audio_data, sr = self.read_audio_file(file_path)
-                    if combined is None:
-                        combined = audio_data
+                    track_data[track_name] = audio_data
+                    if sample_rate is None:
                         sample_rate = sr
-                    else:
-                        combined += audio_data
-                # Normalize the combined audio to prevent clipping
-                combined = combined / np.max(np.abs(combined), axis=0)
-                # If the stream hasn't started, initialize it
+                    if num_channels is None:
+                        num_channels = audio_data.shape[1] if len(audio_data.shape) > 1 else 1
+
+                # Prepare for frame playback
+                num_samples = next(iter(track_data.values())).shape[0]
+                frame_size = 1024
+
                 if self.stream is None:
                     self.stream = self.p.open(format=self.p.get_format_from_width(2),  # Assuming 16-bit audio
-                                            channels=combined.shape[1] if len(combined.shape) > 1 else 1,
+                                            channels=num_channels,
                                             rate=sample_rate,
                                             output=True)
-                # Convert numpy array to int16
-                combined_int16 = (combined * 32767).astype(np.int16)
-
-                # Determine the number of channels
-                if len(combined_int16.shape) == 1:
-                    num_channels = 1
-                else:
-                    num_channels = combined_int16.shape[1]
-
-                num_samples = combined_int16.shape[0]
-                frame_size = 1024  # Number of samples per frame
 
                 for start_idx in range(0, num_samples, frame_size):
                     end_idx = min(start_idx + frame_size, num_samples)
-                    frame = combined_int16[start_idx:end_idx]
+                    with self.lock:
+                        current_tracks = self.tracks.copy()  # Copy current tracks
+                    # Combine the audio data for current frame
+                    frame = None
+                    for track in current_tracks:
+                        if track in track_data:
+                            track_frame = track_data[track][start_idx:end_idx]
+                            if frame is None:
+                                frame = track_frame.copy()
+                            else:
+                                frame += track_frame
+                    if frame is None:
+                        # If no tracks are selected, play silence
+                        frame = np.zeros((end_idx - start_idx, num_channels))
 
-                    # Handle play/pause
+                    # # Normalize frame to prevent clipping
+                    # max_abs = np.max(np.abs(frame))
+                    # if max_abs > 0:
+                    #     frame = frame / max_abs
+
+                    # Convert frame to int16
+                    frame_int16 = (frame * 32767).astype(np.int16)
+
+                    # Handle play/pause as before
                     while not self.playing.is_set():
                         with self.lock:
                             if self.pause_start_time is None:
@@ -124,7 +148,7 @@ class AudioStreamer:
                             self.pause_start_time = None
 
                     # Convert frame to bytes
-                    frame_bytes = frame.tobytes()
+                    frame_bytes = frame_int16.tobytes()
 
                     # Play the frame
                     self.stream.write(frame_bytes)
@@ -147,6 +171,10 @@ class AudioStreamer:
             self.stream.close()
         self.p.terminate()
 
+
+    def change_tracks(self, tracks):
+        """Change the tracks to be streamed."""
+        self.tracks = tracks
 
     def get_pos(self):
         """Returns the current playback position in milliseconds."""
@@ -202,20 +230,19 @@ class AudioStreamer:
 
 
 if __name__ == "__main__":
-    source = "temp/The Weeknd, Playboi Carti - Timeless.mp3"
+    source = "testing_files/Coldplay - Viva La Vida (Official Video).mp3"
     directory_path = f"temp/hdemucs_mmi"
 
-    audio_streamer = AudioStreamer(source, directory_path)
     try:
+        audio_streamer = AudioStreamer(source, directory_path)
         audio_streamer.start()
-        while True:
-            input("Press Enter to pause/resume playback.")
-            if audio_streamer.playing.is_set():
-                audio_streamer.pause()
-            else:
-                audio_streamer.play()
-
     except Exception as e:
-        print(e)
-    finally:
+        print(f"Error starting audio streamer: {e}")
         audio_streamer.stop()
+
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            audio_streamer.stop()
+            break

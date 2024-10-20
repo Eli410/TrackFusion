@@ -7,7 +7,7 @@ def download_video_and_audio(url, username='oauth2', password='', output_dir='.'
     video_opts = {
         'username': username,
         'password': password,
-        'format': 'bestvideo[height<=480][ext=mp4]',  # Download best video at 720p
+        'format': 'bestvideo[height<=480][ext=mp4][fps<=25]',  # Download best video at 720p with fps limit
         'outtmpl': f'{output_dir}/%(title)s.%(ext)s',  # Output template for video
     }
 

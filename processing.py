@@ -65,7 +65,7 @@ def process_audio_sync(filepath, model='hdemucs_mmi'):
 
         # Apply Demucs separation
         try:
-            demucs.separate.main(["--mp3", "-o", "temp", "-n", model, '--two-stems=vocals', chunk_file])
+            demucs.separate.main(["--mp3", "-o", "temp", "-n", model, chunk_file])
             print(f"Applied Demucs separation on '{chunk_file}'.")
         except Exception as e:
             print(f"Demucs separation failed for chunk {i}: {e}")

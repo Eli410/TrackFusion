@@ -6,9 +6,9 @@ import imageio.v3 as iio
 from pygame import mixer
 from math import floor
 from moviepy.editor import VideoFileClip
-from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QPixmap, QKeyEvent, QImage
+from PyQt6.QtGui import QPixmap, QImage
 from ytdl import download_video_and_audio
 import syncedlyrics
 from processing import process_audio_sync
@@ -16,15 +16,16 @@ import signal
 from play_audio import AudioStreamer
 import shutil
 import os
-
+import traceback
 
 model = 'hdemucs_mmi'
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
 
         self.setWindowTitle("TIDALKaraoke")
-        #For more size normalization later
+        # For more size normalization later
         self.screenWidth = 1080
         self.screenHeight = int((self.screenWidth / 16) * 9)
         self.setGeometry(0, 0, self.screenWidth, self.screenHeight)
@@ -34,9 +35,6 @@ class MainWindow(QWidget):
         leftScreenLayout = QVBoxLayout()
 
         ### Create searchBar and searchButton
-        ###
-        ###
-        ###
         searchLayout = QHBoxLayout()
 
         self.searchBar = QLineEdit(self)
@@ -63,10 +61,30 @@ class MainWindow(QWidget):
 
         searchLayout.addWidget(self.searchButton)
 
+        checkboxLayout = QHBoxLayout()
+
+        self.checkbox1 = QCheckBox("vocals", self)
+        self.checkbox2 = QCheckBox("bass", self)
+        self.checkbox3 = QCheckBox("drums", self)
+        self.checkbox4 = QCheckBox("other", self)
+
+        self.checkbox1.setChecked(True)
+        self.checkbox2.setChecked(True)
+        self.checkbox3.setChecked(True)
+        self.checkbox4.setChecked(True)
+
+        checkboxLayout.addWidget(self.checkbox1)
+        checkboxLayout.addWidget(self.checkbox2)
+        checkboxLayout.addWidget(self.checkbox3)
+        checkboxLayout.addWidget(self.checkbox4)
+
+        # on checkbox change
+        self.checkbox1.stateChanged.connect(self.onCheckboxChange)
+        self.checkbox2.stateChanged.connect(self.onCheckboxChange)
+        self.checkbox3.stateChanged.connect(self.onCheckboxChange)
+        self.checkbox4.stateChanged.connect(self.onCheckboxChange)
+        
         ### Create videoLabel that holds pixelMap, connect it to timed update function
-        ###
-        ###
-        ###
         self.videoLabel = QLabel(self)
         self.videoLabel.setStyleSheet("""
             QLabel {
@@ -78,18 +96,11 @@ class MainWindow(QWidget):
         self.isRenderingVideo = False
         self.video = None
         self.videoFPS = None
+        self.videoTimer = None  # Initialize video timer to None
         
         self.videoLabel.setPixmap(QPixmap(600, 540))
-        self.timer = QTimer(self)
         
-        self.renderVideoThread = threading.Thread(target=self.renderVideo)
-        self.renderVideoThread.start()
-        self.timer.timeout.connect(self.startRenderVideoThread)
-
-        #Create layout that holds control buttons
-        ###
-        ###
-        ###
+        # Create layout that holds control buttons
         videoControlLayout = QHBoxLayout()
         
         self.audio_streamer = None
@@ -106,13 +117,11 @@ class MainWindow(QWidget):
         self.pauseButton.setFixedHeight(50)
         self.pauseButton.clicked.connect(self.onPauseButtonClicked)
 
+        
         videoControlLayout.addWidget(self.playButton)
         videoControlLayout.addWidget(self.pauseButton)
 
         ### Create lyricsLabel that holds lyrics
-        ###
-        ###
-        ###
         lyricBoxLayout = QVBoxLayout()
 
         self.lyricBox = QTextEdit(self)
@@ -136,17 +145,14 @@ class MainWindow(QWidget):
         """)
         lyricBoxLayout.addWidget(self.lyricBox)
         
-        # self.renderVideoThread = threading.Thread(target=self.renderLyrics)
-        # self.renderVideoThread.start()
-        # self.timer.timeout.connect(self.startRenderLyricsThread)
-        self.timer.timeout.connect(self.renderLyrics)
-        self.timer.start(1)
+        # Setup lyrics timer
+        self.lyricsTimer = QTimer(self)
+        self.lyricsTimer.setInterval(100)  # Update lyrics every 100 ms
+        self.lyricsTimer.timeout.connect(self.renderLyrics)
         
         ### Show screen
-        ###
-        ###
-        ###
         leftScreenLayout.addLayout(searchLayout)
+        leftScreenLayout.addLayout(checkboxLayout)
         leftScreenLayout.addWidget(self.videoLabel)
         leftScreenLayout.addLayout(videoControlLayout)
 
@@ -159,27 +165,32 @@ class MainWindow(QWidget):
         shutil.rmtree('temp', ignore_errors=True)
         os.makedirs('temp', exist_ok=True)
 
-    def startRenderVideoThread(self):
-        if not self.renderVideoThread.is_alive():
-            self.renderVideoThread = threading.Thread(target=self.renderVideo)
-            self.renderVideoThread.start()
+    def onCheckboxChange(self):
+        options = []
+        if self.checkbox1.isChecked():
+            options.append('vocals')
+        if self.checkbox2.isChecked():
+            options.append('bass')
+        if self.checkbox3.isChecked():
+            options.append('drums')
+        if self.checkbox4.isChecked():
+            options.append('other')
+        print(options)
+
+        self.audio_streamer.change_tracks(options)
 
     def onSearchButtonClick(self):
-        # mixer.music.stop()
-        # mixer.music.unload()
+        if self.audio_streamer:
+            self.audio_streamer.stop()
+            self.audio_streamer = None
 
-        # self.searchBar.setText("https://www.youtube.com/watch?v=B9synWjqBn8")
         youTubeLinkRegex = re.compile(r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|embed/|v/)?([A-Za-z0-9_-]{11})(&.*)*$') #Test Later
-        self.searchButton.setEnabled(False)
 
         if (youTubeLinkRegex.fullmatch(self.searchBar.text())):
 
             video_path, audio_path, info_dict = download_video_and_audio(self.searchBar.text(), output_dir='temp')
 
             ### Audio setup
-            # mixer.music.load(f"temp/{info_dict['title']}.mp3")
-            # mixer.music.play()
-
             self.audio_streamer = AudioStreamer(audio_path, f'temp/{model}')
             signal.signal(signal.SIGINT, self.audio_streamer.handle_signal)  # Handle CTRL+C
             self.audio_streamer.start()
@@ -188,6 +199,12 @@ class MainWindow(QWidget):
             self.isRenderingVideo = True
             self.videoFPS = iio.immeta(video_path, exclude_applied=False).get('fps', None)
             self.video = cv2.VideoCapture(video_path)
+
+            # Setup video timer
+            self.videoTimer = QTimer(self)
+            self.videoTimer.setInterval(int(1000 / self.videoFPS))
+            self.videoTimer.timeout.connect(self.updateVideoFrame)
+            self.videoTimer.start()
 
             ### Lyric setup
             lyrics = syncedlyrics.search(f"[{info_dict['title']}]", synced_only=True) 
@@ -201,34 +218,51 @@ class MainWindow(QWidget):
                 minutes, seconds = int(minutes), float(seconds)
                 milliseconds = int(floor((minutes * 60 + seconds) * 1000))
                 tempLyrics[i] = (milliseconds, tempLyrics[i][tempLyrics[i].index(']')+1:].strip())
-                self.lyrics = tempLyrics
-                self.lyricIndex = 0
-                self.updateLyrics()
+            self.lyrics = tempLyrics
+            self.lyricIndex = 0
+            self.updateLyrics()
+            self.lyricsTimer.start()  # Start lyrics timer
 
     def onPlayButtonClicked(self):
-        # mixer.music.unpause()
         self.audio_streamer.play()
         self.isRenderingVideo = True
+        if self.videoTimer is not None:
+            self.videoTimer.start()
+        if self.lyricsTimer is not None:
+            self.lyricsTimer.start()
 
     def onPauseButtonClicked(self):
-        # mixer.music.pause()
         self.audio_streamer.pause()
         self.isRenderingVideo = False
+        if self.videoTimer is not None:
+            self.videoTimer.stop()
+        if self.lyricsTimer is not None:
+            self.lyricsTimer.stop()
 
-    def renderVideo(self):
-        if self.isRenderingVideo:
-            title = "B9synWjqBn8"
-            frameNumber = (floor((self.audio_streamer.get_pos() / 1000) * self.videoFPS))-1
-            self.video.set(cv2.CAP_PROP_POS_FRAMES, frameNumber)
-            ret, frame = self.video.read()
-            frame = cv2.resize(frame, (854, 480))
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            h, w, ch = frame.shape
-            bytesPerLine = ch * w
-            frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
-            frameImagePixmap = QPixmap.fromImage(frameImage)
-            self.videoLabel.setPixmap(frameImagePixmap)
-    
+    def updateVideoFrame(self):
+        try:
+            if self.isRenderingVideo:
+                frameNumber = self.audio_streamer.get_pos() * self.videoFPS / 1000
+                self.video.set(cv2.CAP_PROP_POS_FRAMES, frameNumber)
+
+                ret, frame = self.video.read()
+                if not ret:
+                    print("Failed to retrieve frame")
+                    self.videoTimer.stop()
+                    return
+                
+                frame = cv2.resize(frame, (854, 480))
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = frame.shape
+                bytesPerLine = ch * w
+                frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
+                frameImagePixmap = QPixmap.fromImage(frameImage)
+                self.videoLabel.setPixmap(frameImagePixmap)
+                
+        except Exception as e:
+            print(f"Error rendering video: {e}")
+            print(traceback.format_exc())
+
     def renderLyrics(self):
         if self.isRenderingLyrics:
             if self.lyricIndex < len(self.lyrics) - 1:
