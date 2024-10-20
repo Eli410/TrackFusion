@@ -15,7 +15,10 @@ class MainWindow(QWidget):
         super().__init__()
 
         self.setWindowTitle("TIDALKaraoke")
-        self.setGeometry(0, 0, 1080, 720)
+        #For more size normalization later
+        self.screenWidth = 1080
+        self.screenHeight = int((self.screenWidth / 16) * 9)
+        self.setGeometry(0, 0, self.screenWidth, self.screenHeight)
 
         screenLayout = QHBoxLayout()
 
@@ -33,7 +36,7 @@ class MainWindow(QWidget):
         self.searchBar.setFixedWidth(500)
         self.searchBar.setStyleSheet("""
             QLineEdit {
-                border: 2px solid gray;
+                border: 4px solid gray;
                 border-radius: 10px;
                 padding: 0 8px;
                 background: white;
@@ -56,6 +59,13 @@ class MainWindow(QWidget):
         ###
         ###
         self.videoLabel = QLabel(self)
+        self.videoLabel.setStyleSheet("""
+            QLabel {
+                border: 4px solid gray;
+                border-radius: 10px;
+            }
+        """)
+
         self.isRenderingVideo = False
         self.video = None
         self.videoFPS = None
@@ -95,7 +105,7 @@ class MainWindow(QWidget):
         lyricBoxLayout = QVBoxLayout()
 
         self.lyricBox = QTextEdit(self)
-        self.lyricBox.setFixedWidth(300)
+        self.lyricBox.setFixedWidth(400)
         self.lyricBox.setFixedHeight(600)
         self.lyricBox.setReadOnly(True)
         self.isRenderingLyrics = False
@@ -103,13 +113,15 @@ class MainWindow(QWidget):
         self.lyricIndex = None
 
         self.lyricBox.setStyleSheet("""
-            QLineEdit {
-                border: 2px solid gray;
+            QTextEdit {
+                border: 4px solid gray;
                 border-radius: 10px;
                 padding: 0 8px;
-                background: white;
+                background: black;
                 selection-background-color: darkgray;
-                color: black;
+                color: white;
+                font-size: 40px;
+                
             }
         """)
         lyricBoxLayout.addWidget(self.lyricBox)
@@ -182,32 +194,38 @@ class MainWindow(QWidget):
             title = "B9synWjqBn8"
             frameNumber = (floor((mixer.music.get_pos() / 1000) * self.videoFPS))-1
             self.video.set(cv2.CAP_PROP_POS_FRAMES, frameNumber)
-            ret, frame = self.video.read()
-            frame = cv2.resize(frame, (600, 540))
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            h, w, ch = frame.shape
-            bytesPerLine = ch * w
-            frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
-            frameImagePixmap = QPixmap.fromImage(frameImage)
-            self.videoLabel.setPixmap(frameImagePixmap)
+            isValidFrame, frame = self.video.read()
+            if isValidFrame:
+                frame = cv2.resize(frame, (600, 540))
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                h, w, ch = frame.shape
+                bytesPerLine = ch * w
+                frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
+                frameImagePixmap = QPixmap.fromImage(frameImage)
+                self.videoLabel.setPixmap(frameImagePixmap)
+            else:
+                mixer.music.stop()
+                mixer.music.unload()
+                self.isRenderingVideo = False
+                self.isRenderingLyrics = False
     
     def renderLyrics(self):
         if self.isRenderingLyrics:
             if self.lyricIndex < len(self.lyrics) - 1:
-                if mixer.music.get_pos() >= self.lyrics[self.lyricIndex+1][0]:
+                if mixer.music.get_pos()-5500 >= self.lyrics[self.lyricIndex+1][0]:
                     self.lyricIndex = self.lyricIndex + 1
                     self.updateLyrics()
         
     def updateLyrics(self):
         if self.lyricIndex == len(self.lyrics) - 1:
-            self.lyricBox.setText(self.lyrics[self.lyricIndex][1] + '\n' + '\n')
+            self.lyricBox.setHtml("<b>" + self.lyrics[self.lyricIndex][1] + "</b>" + "<br>" + "<br>")
         elif self.lyricIndex == len(self.lyrics) - 2:
-            self.lyricBox.setText(self.lyrics[self.lyricIndex+1][1] + '\n' + '\n' +
-                                  self.lyrics[self.lyricIndex+2][1] + '\n' + '\n')
+            self.lyricBox.setText("<b>" + self.lyrics[self.lyricIndex][1] + "</b>" + "<br>" + "<br>" +
+                                  self.lyrics[self.lyricIndex+1][1] + "<br>" + "<br>")
         else: 
-            self.lyricBox.setText(self.lyrics[self.lyricIndex][1] + '\n' + '\n' +
-                                  self.lyrics[self.lyricIndex+1][1] + '\n' + '\n' +
-                                  self.lyrics[self.lyricIndex+2][1] + '\n' + '\n')
+            self.lyricBox.setText("<b>" + self.lyrics[self.lyricIndex][1] + "</b>" + "<br>" + "<br>" +
+                                  self.lyrics[self.lyricIndex+1][1] + "<br>" + "<br>" +
+                                  self.lyrics[self.lyricIndex+2][1] + "<br>" + "<br>")
 
 app = QApplication(sys.argv)
 mixer.init()
