@@ -1,21 +1,58 @@
-# tidal-2024
-## Tidal Hackathon
+# Tidal-2024
 
-To set up the project, follow these steps:
+Welcome to **Tidal-2024**, a real-time track separation software developed for the Tidal Hackathon. This application allows users to dynamically separate audio tracks from videos and overlay selected tracks for customized playback.
 
-1. **Install Dependencies**:
-    ```sh
-    pip install -r requirements.txt
-    ```
+## Features
 
-2. **Setup YouTube Downloader**:
-    ```sh
-    python setup_ytdl.py
-    ```
-    Follow the prompts to configure with your Google account.
+- **Real-Time Track Separation:** Separate tracks in real-time from any uploaded video.
+- **Custom Track Overlay:** Choose specific tracks to overlay and customize your listening experience.
+- **YouTube Integration:** Seamlessly pull audio from YouTube videos to experiment with various tracks.
+- **Easy-to-Use Interface:** Simple PyQt interface for quick setup and playback.
 
-3. **Run the Main Script**:
-    ```sh
-    python main.py
-    ```
+## Prerequisites
 
+Before you can run **Tidal-2024**, you'll need to have the following installed on your system:
+- Python 3.10 or higher
+- FFmpeg
+
+You can download FFmpeg from [FFmpeg Official Site](https://ffmpeg.org/download.html), and it must be included in your system's PATH.
+
+## Installation
+
+To get started with **Tidal-2024**, follow these steps:
+
+1. **Clone the Repository**
+   ```bash
+   git clone https://github.com/yourusername/tidal-2024.git
+   cd tidal-2024
+   ```
+
+2. **Install Required Python Packages**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Setup YouTube Integration**
+   - Run the `setup_ytdl.py` script to authenticate and set up YouTube downloading capabilities.
+   ```bash
+   python setup_ytdl.py
+   ```
+
+## Usage
+
+To use **Tidal-2024**, run the `main.py` script from the command line:
+
+```bash
+python main.py
+```
+
+## Contributing
+
+Interested in contributing? Great! You can contribute by:
+- Reporting a bug
+- Submitting a feature request
+- Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
+## License
+
+Distributed under the MIT License. See `LICENSE` for more information.
