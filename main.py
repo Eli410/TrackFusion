@@ -1,7 +1,7 @@
 import sys
 import re
 import cv2
-import threading
+import ytm
 import imageio.v3 as iio
 from pygame import mixer
 from math import floor
@@ -11,12 +11,12 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPixmap, QImage
 from ytdl import download_video_and_audio
 import syncedlyrics
-from processing import process_audio_sync
 import signal
 from play_audio import AudioStreamer
 import shutil
 import os
 import traceback
+import json
 
 model = 'hdemucs_mmi'
 
@@ -161,6 +161,7 @@ class MainWindow(QWidget):
 
         self.setLayout(screenLayout)
 
+        self.ytm_api = ytm.YouTubeMusic()
         # clear temp folder
         shutil.rmtree('temp', ignore_errors=True)
         os.makedirs('temp', exist_ok=True)
@@ -188,7 +189,7 @@ class MainWindow(QWidget):
 
         if (youTubeLinkRegex.fullmatch(self.searchBar.text())):
 
-            video_path, audio_path, info_dict = download_video_and_audio(self.searchBar.text(), output_dir='temp')
+            video_url, audio_path, info_dict = download_video_and_audio(self.searchBar.text(), output_dir='temp')
 
             ### Audio setup
             self.audio_streamer = AudioStreamer(audio_path, f'temp/{model}')
@@ -197,17 +198,22 @@ class MainWindow(QWidget):
 
             ### Video setup
             self.isRenderingVideo = True
-            self.videoFPS = iio.immeta(video_path, exclude_applied=False).get('fps', None)
-            self.video = cv2.VideoCapture(video_path)
+            self.video = cv2.VideoCapture(video_url)
+            self.videoFPS = self.video.get(cv2.CAP_PROP_FPS)
 
             # Setup video timer
             self.videoTimer = QTimer(self)
             self.videoTimer.setInterval(int(1000 / self.videoFPS))
             self.videoTimer.timeout.connect(self.updateVideoFrame)
             self.videoTimer.start()
-
+        
             ### Lyric setup
-            lyrics = syncedlyrics.search(f"[{info_dict['title']}]", synced_only=True) 
+
+            res = self.ytm_api.search_songs(info_dict['title'])['items'][0]
+            song_name = res['name']
+            artist_name = res['artists'][0]['name']
+            lyrics = syncedlyrics.search(f"[{song_name}] [{artist_name}]", synced_only=True)
+            print(f"[{song_name}] [{artist_name}]")
             if not lyrics:
                 lyrics = 'No lyrics found'
             
@@ -222,7 +228,7 @@ class MainWindow(QWidget):
             self.lyricIndex = 0
             self.updateLyrics()
             self.lyricsTimer.start()  # Start lyrics timer
-
+    
     def onPlayButtonClicked(self):
         self.audio_streamer.play()
         self.isRenderingVideo = True
@@ -242,8 +248,10 @@ class MainWindow(QWidget):
     def updateVideoFrame(self):
         try:
             if self.isRenderingVideo:
-                frameNumber = self.audio_streamer.get_pos() * self.videoFPS / 1000
-                self.video.set(cv2.CAP_PROP_POS_FRAMES, frameNumber)
+                # frameNumber = self.audio_streamer.get_pos() * self.videoFPS / 1000
+                # self.video.set(cv2.CAP_PROP_POS_FRAMES, frameNumber)
+                while self.audio_streamer.get_pos() == 0:
+                    pass
 
                 ret, frame = self.video.read()
                 if not ret:
@@ -251,8 +259,6 @@ class MainWindow(QWidget):
                     self.videoTimer.stop()
                     return
                 
-                frame = cv2.resize(frame, (854, 480))
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 h, w, ch = frame.shape
                 bytesPerLine = ch * w
                 frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
@@ -281,8 +287,19 @@ class MainWindow(QWidget):
                                   self.lyrics[self.lyricIndex+1][1] + "<br>" + "<br>" +
                                   self.lyrics[self.lyricIndex+2][1] + "<br>" + "<br>")
 
+
+def handleClose():
+    if window.audio_streamer:
+        window.audio_streamer.stop()
+    if window.videoTimer:
+        window.videoTimer.stop()
+    if window.lyricsTimer:
+        window.lyricsTimer.stop()
+    app.quit()
+
 app = QApplication(sys.argv)
 mixer.init()
 window = MainWindow()
 window.show()
+app.aboutToQuit.connect(handleClose)
 app.exec()

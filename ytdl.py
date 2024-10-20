@@ -3,14 +3,12 @@ import json
 
 
 def download_video_and_audio(url, username='oauth2', password='', output_dir='.'):
-    # Options for downloading the video at 720p resolution
-    video_opts = {
-        'username': username,
-        'password': password,
-        'format': 'bestvideo[height<=480][ext=mp4][fps<=25]',  # Download best video at 720p with fps limit
-        'outtmpl': f'{output_dir}/%(title)s.%(ext)s',  # Output template for video
+    ydl_opts = {
+        'format': 'bestvideo[height<=480]',  # Choose the best video with a maximum height of 480p
     }
-
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        video_url = info_dict.get('url')
     # Options for downloading the best audio available and converting it to MP3
     audio_opts = {
         'username': username,
@@ -29,18 +27,14 @@ def download_video_and_audio(url, username='oauth2', password='', output_dir='.'
         info_dict = ydl.extract_info(url, download=False)
         video_title = info_dict.get('title', 'downloaded_video')
 
-    video_path = f"{output_dir}/{video_title}.mp4"
+    
     audio_path = f"{output_dir}/{video_title}.mp3"
-
-    # Download the video
-    with yt_dlp.YoutubeDL(video_opts) as ydl:
-        ydl.download([url])
 
     # Download and convert the audio
     with yt_dlp.YoutubeDL(audio_opts) as ydl:
         ydl.download([url])
 
-    return video_path, audio_path, info_dict
+    return video_url, audio_path, info_dict
 
 # Example usage:
 if __name__ == "__main__":
