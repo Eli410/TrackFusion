@@ -5,10 +5,9 @@ import ytm
 import imageio.v3 as iio
 from pygame import mixer
 from math import floor
-from moviepy.editor import VideoFileClip
-from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QStyledItemDelegate, QCompleter
+from PyQt6.QtCore import QTimer, QSize, Qt, QRect, QStringListModel
+from PyQt6.QtGui import QPixmap, QImage, QColor, QFont, QMovie
 from ytdl import download_video_and_audio
 import syncedlyrics
 import signal
@@ -51,16 +50,51 @@ class MainWindow(QWidget):
                 color: black;
             }
         """)
+        self.searchBar.returnPressed.connect(self.onSearchButtonClick)
         searchLayout.addWidget(self.searchBar)
 
         self.searchButton = QPushButton(self)
-        self.searchButton.setText("Search")
+        self.searchButton.setText("Play")
         self.searchButton.setFixedWidth(75)
         self.searchButton.setFixedHeight(50)
         self.searchButton.clicked.connect(self.onSearchButtonClick)
-
         searchLayout.addWidget(self.searchButton)
 
+        # Setup loading label
+        self.loadingLabel = QLabel("Loading...", self)
+        self.loadingLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        movie = QMovie("loading.gif")  
+        self.loadingLabel.setMovie(movie)
+        self.loadingLabel.hide()  # Hidden by default
+        
+        screenLayout.addWidget(self.loadingLabel)
+
+        # Initialize QTimer
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)  # 1 second
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.show_completer)
+
+        # Connect textChanged signal to restart timer
+        self.searchBar.textChanged.connect(self.on_text_changed)
+
+
+        # Initialize Completer
+        self.completer = QCompleter(self)
+        self.model = AutocompleteModel(self)
+        self.completer.setModel(self.model)
+        self.completer.setWidget(self.searchBar)
+        self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.completer.activated.connect(self.on_suggestion_selected)
+
+        # Set custom delegate
+        delegate = AutocompleteDelegate(self.completer.popup())
+        self.completer.popup().setItemDelegate(delegate)
+
+        # Optional: Adjust completer popup size
+        self.completer.popup().setMinimumWidth(500)
+        self.completer.popup().setMinimumHeight(200)
         checkboxLayout = QHBoxLayout()
 
         self.checkbox1 = QCheckBox("vocals", self)
@@ -181,9 +215,20 @@ class MainWindow(QWidget):
         self.audio_streamer.change_tracks(options)
 
     def onSearchButtonClick(self):
+        # Display loading screen
+        self.loadingLabel.show()
+        self.loadingLabel.movie().start()
+
         if self.audio_streamer:
             self.audio_streamer.stop()
             self.audio_streamer = None
+        
+        # reset all comboboxes
+        self.checkbox1.setChecked(True)
+        self.checkbox2.setChecked(True)
+        self.checkbox3.setChecked(True)
+        self.checkbox4.setChecked(True)
+
 
         youTubeLinkRegex = re.compile(r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|embed/|v/)?([A-Za-z0-9_-]{11})(&.*)*$') #Test Later
 
@@ -228,6 +273,10 @@ class MainWindow(QWidget):
             self.lyricIndex = 0
             self.updateLyrics()
             self.lyricsTimer.start()  # Start lyrics timer
+
+        # Hide loading screen
+        self.loadingLabel.hide()
+        self.loadingLabel.movie().stop()
     
     def onPlayButtonClicked(self):
         self.audio_streamer.play()
@@ -286,6 +335,110 @@ class MainWindow(QWidget):
             self.lyricBox.setText("<b>" + self.lyrics[self.lyricIndex][1] + "</b>" + "<br>" + "<br>" +
                                   self.lyrics[self.lyricIndex+1][1] + "<br>" + "<br>" +
                                   self.lyrics[self.lyricIndex+2][1] + "<br>" + "<br>")
+
+    def on_text_changed(self, text):
+        if text:
+            self.timer.start()
+        else:
+            self.completer.popup().hide()
+
+    def on_suggestion_selected(self, suggestion):
+        # This method is called when a suggestion is clicked. The suggestion parameter will be the text of the selected item.
+        for text, id in self.model.suggestions:
+            if text == suggestion:
+                yt_url = f'https://www.youtube.com/watch?v={id}'
+                self.searchBar.setText(yt_url)
+                break
+
+    def show_completer(self):
+        text = self.searchBar.text()
+        if text:
+            try:
+                suggestions = self.ytm_api.search_songs(text)
+            except Exception as e:
+                print(f"Error searching for songs: {e}")
+                self.ytm_api = ytm.YouTubeMusic()
+            suggestions = [((song['artists'][0]['name'] + ' - ' + song['name']), song['id']) for song in suggestions['items']]
+            self.model.set_data(suggestions)
+            self.completer.complete()
+
+        
+
+class AutocompleteDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.thumbnail_size = QSize(40, 40)
+        self.padding = 5
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        painter.save()
+
+        # Retrieve data
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        thumbnail_url = index.data(Qt.ItemDataRole.UserRole)
+        
+        # Define the rectangle for the thumbnail
+        thumbnail_rect = QRect(
+            option.rect.left() + self.padding,
+            option.rect.top() + (option.rect.height() - self.thumbnail_size.height()) // 2,
+            self.thumbnail_size.width(),
+            self.thumbnail_size.height(),
+        )
+
+        # Draw the thumbnail
+        if thumbnail_url:
+            image = iio.imread(thumbnail_url)
+            qimage = QImage(image.data, image.shape[1], image.shape[0], QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimage)
+            painter.drawPixmap(thumbnail_rect, pixmap.scaled(
+                self.thumbnail_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            # Placeholder for missing image
+            painter.fillRect(thumbnail_rect, QColor("gray"))
+
+        # Define the rectangle for the text
+        text_rect = QRect(
+            thumbnail_rect.right() + self.padding,
+            option.rect.top(),
+            option.rect.width() - self.thumbnail_size.width() - 3 * self.padding,
+            option.rect.height(),
+        )
+
+        # Draw the text
+        painter.setFont(QFont("Arial", 10))
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(200, max(self.thumbnail_size.height() + 2 * self.padding, 50))
+
+class AutocompleteModel(QStringListModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.suggestions = []  # List of tuples (text, image_path)
+        # self.populate_model()
+
+    def populate_model(self):
+        display_strings = [s[0] for s in self.suggestions]
+        self.setStringList(display_strings)
+
+    def data(self, index, role):
+        if not index.isValid():
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
+            return self.suggestions[index.row()][0]
+        if role == Qt.ItemDataRole.UserRole:
+            pixmap = QPixmap(self.suggestions[index.row()][1])
+            if pixmap.isNull():
+                return None
+            return pixmap
+        return super().data(index, role)
+
+    def set_data(self, suggestions):
+        self.suggestions = suggestions
+        self.populate_model()
 
 
 def handleClose():

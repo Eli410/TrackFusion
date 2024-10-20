@@ -1,27 +1,91 @@
-import cv2
-import yt_dlp
+import os
+import math
+import time
+from pydub import AudioSegment
+import demucs.separate
+import numpy as np
 
-def fetch_url(video_url):
-    ydl_opts = {
-        'format': 'bestvideo',  # You may want to choose a specific quality
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(video_url, download=False)
-        video_url = info_dict.get('url')
-        return video_url
+def process_audio_sync(filepath, model='hdemucs_mmi', chunk_length=10, overlap_duration=1):
+    """
+    Processes an audio file by splitting it into overlapping chunks, applying Demucs separation,
+    and recombining the outputs with crossfading to eliminate gaps between chunks.
 
-def stream_video(video_url):
-    cap = cv2.VideoCapture(video_url)
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        cv2.imshow('Video', frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to quit
-            break
-    cap.release()
-    cv2.destroyAllWindows()
+    Args:
+        filepath (str): The path to the input MP3 file.
+        model (str): The Demucs model name to use for separation.
+        chunk_length (int): The length of each chunk in seconds.
+        overlap_duration (int): The duration of overlap between chunks in seconds.
+    """
+    if not os.path.isfile(filepath):
+        print(f"Error: File '{filepath}' does not exist.")
+        return
 
-# Replace 'YOUR_YOUTUBE_VIDEO_URL' with your YouTube video URL
-stream_url = fetch_url('https://www.youtube.com/watch?v=dvgZkm1xWPE')
-stream_video(stream_url)
+    try:
+        # Load the audio file
+        audio = AudioSegment.from_mp3(filepath)
+        print(f"Loaded audio file '{filepath}' successfully.")
+    except Exception as e:
+        print(f"Failed to load audio file '{filepath}': {e}")
+        return
+
+    # Convert durations from seconds to milliseconds
+    chunk_length_ms = chunk_length * 1000
+    overlap_ms = overlap_duration * 1000
+    step_ms = chunk_length_ms - overlap_ms
+    total_chunks = math.ceil((len(audio) - overlap_ms) / step_ms)
+
+    processed_clips = []
+
+    for i in range(total_chunks)[:5]:
+        start = i * step_ms
+        end = start + chunk_length_ms
+        if end > len(audio):
+            end = len(audio)
+            start = max(0, end - chunk_length_ms)  # Ensure the last chunk is the correct length
+
+        chunk = audio[start:end]
+        chunk_file = f"chunk_{i}.mp3"
+        chunk.export(chunk_file, format="mp3")
+        print(f"Exported chunk {i} from {start}ms to {end}ms.")
+
+        start_time = time.time()
+
+        # Apply Demucs separation
+        try:
+            demucs.separate.main(["--mp3", "-o", "temp", "-n", model, chunk_file])
+            print(f"Applied Demucs separation on '{chunk_file}'.")
+        except Exception as e:
+            print(f"Demucs separation failed for chunk {i}: {e}")
+            os.remove(chunk_file)  # Clean up the failed chunk file
+            continue
+
+        # Define output path
+        output_chunk_dir = os.path.join('temp', model, os.path.splitext(os.path.basename(chunk_file))[0])
+        vocals_path = os.path.join(output_chunk_dir, "vocals.mp3")
+
+        # Load the processed vocals
+        processed_vocals = AudioSegment.from_mp3(vocals_path)
+        processed_clips.append(processed_vocals)
+
+        # Clean up the chunk file
+        os.remove(chunk_file)
+
+        elapsed_time = time.time() - start_time
+        print(f"Chunk {i} processed in {elapsed_time:.2f} seconds.")
+        print(f"Output Path: {vocals_path}\n")
+
+    # Recombine processed chunks with crossfading
+    final_audio = processed_clips[0]
+    for i in range(1, len(processed_clips)):
+        final_audio = final_audio.append(processed_clips[i], crossfade=overlap_ms)
+
+    # Export the final recombined audio
+    output_dir = os.path.join('temp', model)
+    os.makedirs(output_dir, exist_ok=True)
+    final_output_path = os.path.join(output_dir, "final_output.mp3")
+    final_audio.export(final_output_path, format="mp3")
+    print(f"Final output saved to '{final_output_path}'.")
+
+    print("Processing complete.")
+
+process_audio_sync("testing_files/Coldplay - Viva La Vida (Official Video).mp3")

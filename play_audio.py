@@ -6,6 +6,11 @@ import subprocess
 import shutil
 import threading
 import time
+import traceback
+from pydub import AudioSegment
+from pydub.silence import detect_nonsilent
+
+
 
 class AudioStreamer:
     def __init__(self, source, root_dir):
@@ -37,10 +42,12 @@ class AudioStreamer:
         os.makedirs(self.root_dir, exist_ok=True)
         self.child = subprocess.Popen(["python", "processing.py", self.source])#, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
+
     def read_audio_file(self, file_path):
         """Reads an audio file and returns numpy array and sample rate"""
         data, samplerate = sf.read(file_path)
         return data, samplerate
+        
 
     def _stream_audio(self):
         print("Streaming audio...")
@@ -94,6 +101,9 @@ class AudioStreamer:
                     if num_channels is None:
                         num_channels = audio_data.shape[1] if len(audio_data.shape) > 1 else 1
 
+                # clean up chunk directory
+                shutil.rmtree(chunk_path)
+
                 # Prepare for frame playback
                 num_samples = next(iter(track_data.values())).shape[0]
                 frame_size = 1024
@@ -121,10 +131,9 @@ class AudioStreamer:
                         # If no tracks are selected, play silence
                         frame = np.zeros((end_idx - start_idx, num_channels))
 
-                    # # Normalize frame to prevent clipping
-                    # max_abs = np.max(np.abs(frame))
-                    # if max_abs > 0:
-                    #     frame = frame / max_abs
+                    gain_reduction = 0.8  # Reduce volume by 20%
+                    frame *= gain_reduction
+
 
                     # Convert frame to int16
                     frame_int16 = (frame * 32767).astype(np.int16)
@@ -164,6 +173,7 @@ class AudioStreamer:
                 break
             except Exception as e:
                 print(f"Error while streaming audio: {e}")
+                print(traceback.format_exc())
                 break
         # Stop and close the stream
         if self.stream is not None:

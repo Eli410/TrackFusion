@@ -3,8 +3,6 @@ from pydub import AudioSegment
 import time
 import sys
 import demucs.separate
-import ffmpeg
-import soundfile as sf
 import math
 
 
@@ -45,23 +43,9 @@ def process_audio_sync(filepath, model='hdemucs_mmi'):
         chunk.export(f"chunk_{i}.mp3", format="mp3")
         print(f"Exported chunk {i} from {start}ms to {end}ms.")
 
-    # # Loop over the audio in 10-second chunks
-    # for i in range(0, len(audio), chunk_length):
-    #     chunk_index = i // chunk_length
         start_time = time.time()
-    #     print(f"Processing chunk {chunk_index}...")
 
-    #     # Extract the chunk
-    #     chunk = audio[i:i + chunk_length]
-
-    #     # Create a temporary file for the chunk
         chunk_file = f"chunk_{i}.mp3"
-    #     try:
-    #         chunk.export(chunk_file, format="mp3", codec="libmp3lame")
-    #         print(f"Exported chunk {chunk_index} to '{chunk_file}'.")
-    #     except Exception as e:
-    #         print(f"Failed to export chunk {chunk_index}: {e}")
-    #         continue
 
         # Apply Demucs separation
         try:
