@@ -56,7 +56,7 @@ class AudioStreamer:
             time.sleep(0.1)
 
         with self.lock:
-            self.playback_start_time = time.time() + 0.5 
+            self.playback_start_time = time.time() + 1
 
         while True:
             if self.stop_event.is_set():

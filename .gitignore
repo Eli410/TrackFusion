@@ -167,6 +167,9 @@ cython_debug/
 # ignore .mp4
 *.mp4
 
+# ignore .webm
+*.webm
+
 # ignore temp
 temp/
 

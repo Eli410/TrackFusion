@@ -1,81 +1,89 @@
-import os
-import math
-import time
-from pydub import AudioSegment
-import demucs.separate
-import numpy as np
+import threading
+import yt_dlp
 
-def process_audio_sync(filepath, model='hdemucs_mmi', chunk_length=10, overlap_duration=1):
-    """
-    Processes an audio file by splitting it into overlapping chunks, applying Demucs separation,
-    and recombining the outputs with crossfading to eliminate gaps between chunks.
+def get_video_url(url, username='oauth2', password=''):
+    ydl_opts = {
+        'username': username,
+        'password': password,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        # Filter formats for best video up to 480p
+        video_formats = [
+            f for f in info_dict.get('formats', [])
+            if f.get('vcodec') != 'none' and f.get('height', 0) <= 480
+        ]
+        if video_formats:
+            # Select the format with the highest quality up to 480p
+            best_video = max(video_formats, key=lambda f: f.get('height', 0))
+            video_url = best_video.get('url')
+        else:
+            video_url = info_dict.get('url')  # Fallback to the default URL
+    return video_url, info_dict
 
-    Args:
-        filepath (str): The path to the input MP3 file.
-        model (str): The Demucs model name to use for separation.
-        chunk_length (int): The length of each chunk in seconds.
-        overlap_duration (int): The duration of overlap between chunks in seconds.
-    """
-    if not os.path.isfile(filepath):
-        print(f"Error: File '{filepath}' does not exist.")
-        return
+def download_audio(url, username='oauth2', password='', output_dir='.'):
+    # First, extract info to get video_id
+    ydl_opts = {
+        'username': username,
+        'password': password,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        video_id = info_dict.get('id', 'downloaded_video')
 
-    try:
-        # Load the audio file
-        audio = AudioSegment.from_mp3(filepath)
-        print(f"Loaded audio file '{filepath}' successfully.")
-    except Exception as e:
-        print(f"Failed to load audio file '{filepath}': {e}")
-        return
+    audio_path = f"{output_dir}/{video_id}.mp3"
+    # Options for downloading and converting the audio
+    audio_opts = {
+        'username': username,
+        'password': password,
+        'format': 'bestaudio',
+        'outtmpl': audio_path,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+    }
+    # Download and convert the audio
+    with yt_dlp.YoutubeDL(audio_opts) as ydl:
+        ydl.download([url])
+    return audio_path, info_dict
 
-    # Convert durations from seconds to milliseconds
-    chunk_length_ms = chunk_length * 1000
-    overlap_ms = overlap_duration * 1000
-    step_ms = chunk_length_ms - overlap_ms
-    total_chunks = math.ceil((len(audio) - overlap_ms) / step_ms)
+def download_video_and_audio(url, username='oauth2', password='', output_dir='.'):
+    video_url = None
+    video_info = None
+    audio_path = None
+    audio_info = None
 
+    # Define target functions for threading
+    def fetch_video_url():
+        nonlocal video_url, video_info
+        video_url, video_info = get_video_url(url, username, password)
 
-    for i in range(total_chunks):
-        start = i * step_ms
-        end = start + chunk_length_ms
-        if end > len(audio):
-            end = len(audio)
-            start = max(0, end - chunk_length_ms)  # Ensure the last chunk is the correct length
+    def fetch_audio():
+        nonlocal audio_path, audio_info
+        audio_path, audio_info = download_audio(url, username, password, output_dir)
 
-        chunk = audio[start:end]
-        chunk_file = f"chunk_{i}.mp3"
-        chunk.export(chunk_file, format="mp3")
-        print(f"Exported chunk {i} from {start}ms to {end}ms.")
+    # Create threads
+    video_thread = threading.Thread(target=fetch_video_url)
+    audio_thread = threading.Thread(target=fetch_audio)
 
-        start_time = time.time()
+    # Start threads
+    video_thread.start()
+    audio_thread.start()
 
-        # Apply Demucs separation
-        try:
-            demucs.separate.main(["--mp3", "-o", "temp", "-n", model, chunk_file])
-            print(f"Applied Demucs separation on '{chunk_file}'.")
-        except Exception as e:
-            print(f"Demucs separation failed for chunk {i}: {e}")
-            os.remove(chunk_file)  # Clean up the failed chunk file
-            continue
+    # Wait for both threads to complete
+    video_thread.join()
+    audio_thread.join()
 
-        # Define output path
-        output_chunk_dir = os.path.join('temp', model, os.path.splitext(os.path.basename(chunk_file))[0])
-        vocals_path = os.path.join(output_chunk_dir, "vocals.mp3")
+    # Use video_info or audio_info as info_dict (they should be the same)
+    info_dict = video_info
 
-        # Clean up the chunk file
-        os.remove(chunk_file)
+    return video_url, audio_path, info_dict
 
-        elapsed_time = time.time() - start_time
-        print(f"Chunk {i} processed in {elapsed_time:.2f} seconds.")
-        print(f"Output Path: {vocals_path}\n")
-
-    # Recombine processed chunks with crossfading
-    # final_audio = processed_clips[0]
-    # for i in range(1, len(processed_clips)):
-    #     final_audio = final_audio.append(processed_clips[i], crossfade=overlap_ms)
-    
-    print("Processing complete.")
-
-
-if __name__ == "__main__":
-    process_audio_sync("testing_files/Queen - Don't Stop Me Now (Official Video).mp3")
+# Example usage
+if __name__ == '__main__':
+    video_url, audio_path, info = download_video_and_audio('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+    print(f"Video URL: {video_url}")
+    print(f"Audio Path: {audio_path}")
+    # print(f"Info: {info}")
