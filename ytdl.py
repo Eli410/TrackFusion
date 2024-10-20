@@ -19,16 +19,16 @@ def download_video_and_audio(url, username='oauth2', password='', output_dir='.'
             'preferredcodec': 'mp3',  # Convert audio to MP3
             'preferredquality': '192',  # Set quality (you can adjust this as needed)
         }],
-        'outtmpl': f'{output_dir}/%(title)s.%(ext)s',  # Output template for audio
+        'outtmpl': f'{output_dir}/%(id)s.%(ext)s',  # Output template for audio
     }
 
     # Initialize yt_dlp and get video info to construct file paths
     with yt_dlp.YoutubeDL() as ydl:
         info_dict = ydl.extract_info(url, download=False)
-        video_title = info_dict.get('title', 'downloaded_video')
+        video_id = info_dict.get('id', 'downloaded_video')
 
     
-    audio_path = f"{output_dir}/{video_title}.mp3"
+    audio_path = f"{output_dir}/{video_id}.mp3"
 
     # Download and convert the audio
     with yt_dlp.YoutubeDL(audio_opts) as ydl:

@@ -7,9 +7,6 @@ import shutil
 import threading
 import time
 import traceback
-from pydub import AudioSegment
-from pydub.silence import detect_nonsilent
-
 
 
 class AudioStreamer:
@@ -101,12 +98,15 @@ class AudioStreamer:
                     if num_channels is None:
                         num_channels = audio_data.shape[1] if len(audio_data.shape) > 1 else 1
 
-                # clean up chunk directory
+                # Clean up chunk directory
                 shutil.rmtree(chunk_path)
 
                 # Prepare for frame playback
                 num_samples = next(iter(track_data.values())).shape[0]
                 frame_size = 1024
+
+                # Calculate 100 ms in samples
+                samples_to_skip = int(0.1 * sample_rate)  # 100 ms of samples to skip at the start and end
 
                 if self.stream is None:
                     self.stream = self.p.open(format=self.p.get_format_from_width(2),  # Assuming 16-bit audio
@@ -114,8 +114,12 @@ class AudioStreamer:
                                             rate=sample_rate,
                                             output=True)
 
-                for start_idx in range(0, num_samples, frame_size):
-                    end_idx = min(start_idx + frame_size, num_samples)
+                # Adjust loop to skip 100 ms at the beginning and the end
+                start_sample = samples_to_skip
+                end_sample = num_samples - samples_to_skip
+
+                for start_idx in range(start_sample, end_sample, frame_size):
+                    end_idx = min(start_idx + frame_size, end_sample)
                     with self.lock:
                         current_tracks = self.tracks.copy()  # Copy current tracks
                     # Combine the audio data for current frame
@@ -133,7 +137,6 @@ class AudioStreamer:
 
                     gain_reduction = 0.8  # Reduce volume by 20%
                     frame *= gain_reduction
-
 
                     # Convert frame to int16
                     frame_int16 = (frame * 32767).astype(np.int16)
@@ -158,7 +161,6 @@ class AudioStreamer:
 
                     # Convert frame to bytes
                     frame_bytes = frame_int16.tobytes()
-
                     # Play the frame
                     self.stream.write(frame_bytes)
 
@@ -180,6 +182,7 @@ class AudioStreamer:
             self.stream.stop_stream()
             self.stream.close()
         self.p.terminate()
+
 
 
     def change_tracks(self, tracks):

@@ -34,9 +34,8 @@ def process_audio_sync(filepath, model='hdemucs_mmi', chunk_length=10, overlap_d
     step_ms = chunk_length_ms - overlap_ms
     total_chunks = math.ceil((len(audio) - overlap_ms) / step_ms)
 
-    processed_clips = []
 
-    for i in range(total_chunks)[:5]:
+    for i in range(total_chunks):
         start = i * step_ms
         end = start + chunk_length_ms
         if end > len(audio):
@@ -63,10 +62,6 @@ def process_audio_sync(filepath, model='hdemucs_mmi', chunk_length=10, overlap_d
         output_chunk_dir = os.path.join('temp', model, os.path.splitext(os.path.basename(chunk_file))[0])
         vocals_path = os.path.join(output_chunk_dir, "vocals.mp3")
 
-        # Load the processed vocals
-        processed_vocals = AudioSegment.from_mp3(vocals_path)
-        processed_clips.append(processed_vocals)
-
         # Clean up the chunk file
         os.remove(chunk_file)
 
@@ -75,17 +70,12 @@ def process_audio_sync(filepath, model='hdemucs_mmi', chunk_length=10, overlap_d
         print(f"Output Path: {vocals_path}\n")
 
     # Recombine processed chunks with crossfading
-    final_audio = processed_clips[0]
-    for i in range(1, len(processed_clips)):
-        final_audio = final_audio.append(processed_clips[i], crossfade=overlap_ms)
-
-    # Export the final recombined audio
-    output_dir = os.path.join('temp', model)
-    os.makedirs(output_dir, exist_ok=True)
-    final_output_path = os.path.join(output_dir, "final_output.mp3")
-    final_audio.export(final_output_path, format="mp3")
-    print(f"Final output saved to '{final_output_path}'.")
-
+    # final_audio = processed_clips[0]
+    # for i in range(1, len(processed_clips)):
+    #     final_audio = final_audio.append(processed_clips[i], crossfade=overlap_ms)
+    
     print("Processing complete.")
 
-process_audio_sync("testing_files/Coldplay - Viva La Vida (Official Video).mp3")
+
+if __name__ == "__main__":
+    process_audio_sync("testing_files/Queen - Don't Stop Me Now (Official Video).mp3")

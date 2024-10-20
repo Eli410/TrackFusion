@@ -34,10 +34,13 @@ def process_audio_sync(filepath, model='hdemucs_mmi'):
     chunk_length_ms = 10 * 1000
     total_chunks = math.ceil(len(audio) / chunk_length_ms)
 
+    overlap = 100
     for i in range(total_chunks):
         
         start = i * chunk_length_ms
-        end = min((i + 1) * chunk_length_ms, len(audio))  # Avoid exceeding the length
+        if i != 0:
+            start -= overlap
+        end = min((i + 1) * chunk_length_ms + overlap, len(audio))  # Avoid exceeding the length
 
         chunk = audio[start:end]
         chunk.export(f"chunk_{i}.mp3", format="mp3")

@@ -15,7 +15,6 @@ from play_audio import AudioStreamer
 import shutil
 import os
 import traceback
-import json
 
 model = 'hdemucs_mmi'
 
@@ -60,18 +59,9 @@ class MainWindow(QWidget):
         self.searchButton.clicked.connect(self.onSearchButtonClick)
         searchLayout.addWidget(self.searchButton)
 
-        # Setup loading label
-        self.loadingLabel = QLabel("Loading...", self)
-        self.loadingLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        movie = QMovie("loading.gif")  
-        self.loadingLabel.setMovie(movie)
-        self.loadingLabel.hide()  # Hidden by default
-        
-        screenLayout.addWidget(self.loadingLabel)
-
         # Initialize QTimer
         self.timer = QTimer(self)
-        self.timer.setInterval(1000)  # 1 second
+        self.timer.setInterval(500) 
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.show_completer)
 
@@ -212,13 +202,11 @@ class MainWindow(QWidget):
             options.append('other')
         print(options)
 
-        self.audio_streamer.change_tracks(options)
+        if self.audio_streamer:
+            self.audio_streamer.change_tracks(options)
 
+        self.searchButton.setEnabled(True)
     def onSearchButtonClick(self):
-        # Display loading screen
-        self.loadingLabel.show()
-        self.loadingLabel.movie().start()
-
         if self.audio_streamer:
             self.audio_streamer.stop()
             self.audio_streamer = None
@@ -233,13 +221,8 @@ class MainWindow(QWidget):
         youTubeLinkRegex = re.compile(r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|embed/|v/)?([A-Za-z0-9_-]{11})(&.*)*$') #Test Later
 
         if (youTubeLinkRegex.fullmatch(self.searchBar.text())):
-
+            self.searchButton.setEnabled(False)
             video_url, audio_path, info_dict = download_video_and_audio(self.searchBar.text(), output_dir='temp')
-
-            ### Audio setup
-            self.audio_streamer = AudioStreamer(audio_path, f'temp/{model}')
-            signal.signal(signal.SIGINT, self.audio_streamer.handle_signal)  # Handle CTRL+C
-            self.audio_streamer.start()
 
             ### Video setup
             self.isRenderingVideo = True
@@ -252,12 +235,18 @@ class MainWindow(QWidget):
             self.videoTimer.timeout.connect(self.updateVideoFrame)
             self.videoTimer.start()
         
+            ### Audio setup
+            self.audio_streamer = AudioStreamer(audio_path, f'temp/{model}')
+            signal.signal(signal.SIGINT, self.audio_streamer.handle_signal)  # Handle CTRL+C
+            self.audio_streamer.start()
+            
             ### Lyric setup
-
+            lyrics = None
             res = self.ytm_api.search_songs(info_dict['title'])['items'][0]
-            song_name = res['name']
-            artist_name = res['artists'][0]['name']
-            lyrics = syncedlyrics.search(f"[{song_name}] [{artist_name}]", synced_only=True)
+            song_name = res['name'] or 'Unknown'
+            artist_name = res['artists'][0]['name'] or 'Unknown'
+            if song_name != 'Unknown' and artist_name != 'Unknown':
+                lyrics = syncedlyrics.search(f"[{song_name}] [{artist_name}]", synced_only=True)
             print(f"[{song_name}] [{artist_name}]")
             if not lyrics:
                 lyrics = 'No lyrics found'
@@ -274,10 +263,6 @@ class MainWindow(QWidget):
             self.updateLyrics()
             self.lyricsTimer.start()  # Start lyrics timer
 
-        # Hide loading screen
-        self.loadingLabel.hide()
-        self.loadingLabel.movie().stop()
-    
     def onPlayButtonClicked(self):
         self.audio_streamer.play()
         self.isRenderingVideo = True
@@ -299,6 +284,7 @@ class MainWindow(QWidget):
             if self.isRenderingVideo:
                 # frameNumber = self.audio_streamer.get_pos() * self.videoFPS / 1000
                 # self.video.set(cv2.CAP_PROP_POS_FRAMES, frameNumber)
+
                 while self.audio_streamer.get_pos() == 0:
                     pass
 
@@ -310,6 +296,7 @@ class MainWindow(QWidget):
                 
                 h, w, ch = frame.shape
                 bytesPerLine = ch * w
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
                 frameImagePixmap = QPixmap.fromImage(frameImage)
                 self.videoLabel.setPixmap(frameImagePixmap)
@@ -347,18 +334,27 @@ class MainWindow(QWidget):
         for text, id in self.model.suggestions:
             if text == suggestion:
                 yt_url = f'https://www.youtube.com/watch?v={id}'
+                self.searchBar.textChanged.disconnect(self.on_text_changed)
                 self.searchBar.setText(yt_url)
+                self.searchBar.textChanged.connect(self.on_text_changed)
                 break
 
     def show_completer(self):
         text = self.searchBar.text()
         if text:
             try:
-                suggestions = self.ytm_api.search_songs(text)
+                suggestion = self.ytm_api.search_videos(text)['items'][:5]
+                suggestion += (self.ytm_api.search_songs(text)['items'][:5])
             except Exception as e:
                 print(f"Error searching for songs: {e}")
                 self.ytm_api = ytm.YouTubeMusic()
-            suggestions = [((song['artists'][0]['name'] + ' - ' + song['name']), song['id']) for song in suggestions['items']]
+
+            suggestions = []
+            for song in suggestion:
+                song_name = song.get('name', None)
+                artist_name = song.get('artists', [{}])[0].get('name', None)
+
+                suggestions.append((f"{song_name} - {artist_name}", song.get('videoId', song.get('id', None))))
             self.model.set_data(suggestions)
             self.completer.complete()
 
