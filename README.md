@@ -23,8 +23,8 @@ To get started with **Okedoke Karaoke**, follow these steps:
 
 1. **Clone the Repository**
    ```bash
-   git clone https://github.com/yourusername/Okedoke Karaoke.git
-   cd Okedoke Karaoke
+   git clone https://github.com/yourusername/Okedoke-Karaoke.git
+   cd Okedoke-Karaoke
    ```
 
 2. **Install Required Python Packages**
