@@ -24,7 +24,11 @@ class MainWindow(QWidget):
         super().__init__()
 
         self.setWindowTitle("TIDALKaraoke")
-        self.setGeometry(0, 0, 1080, 720)
+        #For more size normalization later
+        self.screenWidth = 1080
+        self.screenHeight = int((self.screenWidth / 16) * 9)
+        self.setGeometry(0, 0, self.screenWidth, self.screenHeight)
+
         screenLayout = QHBoxLayout()
 
         leftScreenLayout = QVBoxLayout()
@@ -41,7 +45,7 @@ class MainWindow(QWidget):
         self.searchBar.setFixedWidth(500)
         self.searchBar.setStyleSheet("""
             QLineEdit {
-                border: 2px solid gray;
+                border: 4px solid gray;
                 border-radius: 10px;
                 padding: 0 8px;
                 background: white;
@@ -64,6 +68,13 @@ class MainWindow(QWidget):
         ###
         ###
         self.videoLabel = QLabel(self)
+        self.videoLabel.setStyleSheet("""
+            QLabel {
+                border: 4px solid gray;
+                border-radius: 10px;
+            }
+        """)
+
         self.isRenderingVideo = False
         self.video = None
         self.videoFPS = None
@@ -105,7 +116,7 @@ class MainWindow(QWidget):
         lyricBoxLayout = QVBoxLayout()
 
         self.lyricBox = QTextEdit(self)
-        self.lyricBox.setFixedWidth(300)
+        self.lyricBox.setFixedWidth(400)
         self.lyricBox.setFixedHeight(600)
         self.lyricBox.setReadOnly(True)
         self.isRenderingLyrics = False
@@ -235,7 +246,6 @@ class MainWindow(QWidget):
             self.lyricBox.setText("<b>" + self.lyrics[self.lyricIndex][1] + "</b>" + "<br>" + "<br>" +
                                   self.lyrics[self.lyricIndex+1][1] + "<br>" + "<br>" +
                                   self.lyrics[self.lyricIndex+2][1] + "<br>" + "<br>")
-
 
 app = QApplication(sys.argv)
 mixer.init()
