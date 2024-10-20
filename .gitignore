@@ -173,3 +173,6 @@ temp/
 # Include .mp3 and .mp4 files in testing_file
 !testing_files/*.mp3
 !testing_files/*.mp4
+
+# ignore .DS_Store
+.DS_Store
