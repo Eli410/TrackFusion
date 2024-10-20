@@ -1,0 +1,15 @@
+demucs==4.0.1
+ffmpeg_python==0.2.0
+imageio==2.34.2
+moviepy==1.0.3
+numpy==2.1.2
+opencv_python==4.10.0.84
+pyaudio==0.2.14
+pydub==0.25.1
+pygame==2.6.1
+PyQt6==6.7.1
+soundfile==0.12.1
+syncedlyrics==1.0.1
+yt_dlp==2024.10.7
+https://github.com/coletdjnz/yt-dlp-youtube-oauth2/archive/refs/heads/master.zip
+git+https://github.com/tombulled/python-youtube-music.git
