@@ -46,13 +46,6 @@ To use **Okedoke Karaoke**, run the `main.py` script from the command line:
 python main.py
 ```
 
-## Contributing
-
-Interested in contributing? Great! You can contribute by:
-- Reporting a bug
-- Submitting a feature request
-- Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
-
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
