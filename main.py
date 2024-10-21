@@ -5,9 +5,10 @@ import ytm
 import imageio.v3 as iio
 from pygame import mixer
 from math import floor
-from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QStyledItemDelegate, QCompleter
+from PyQt6.QtWidgets import (QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, 
+                             QHBoxLayout, QPushButton, QCheckBox, QStyledItemDelegate, QCompleter,)
 from PyQt6.QtCore import QTimer, QSize, Qt, QRect, QStringListModel
-from PyQt6.QtGui import QPixmap, QImage, QColor, QFont, QMovie
+from PyQt6.QtGui import QPixmap, QImage, QColor, QFont
 from ytdl import download_video_and_audio
 import syncedlyrics
 import signal
@@ -15,14 +16,14 @@ from play_audio import AudioStreamer
 import shutil
 import os
 import traceback
-import random
+
 model = 'hdemucs_mmi'
 
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("TIDALKaraoke")
+        self.setWindowTitle("Okedoke Karaoke")
         # For more size normalization later
         self.screenWidth = 1080
         self.screenHeight = int((self.screenWidth / 16) * 9)
@@ -36,7 +37,7 @@ class MainWindow(QWidget):
         searchLayout = QHBoxLayout()
 
         self.searchBar = QLineEdit(self)
-        self.searchBar.setPlaceholderText("Enter YouTube link...")
+        self.searchBar.setPlaceholderText("Search or enter YouTube link...")
         self.searchBar.setFixedHeight(50)
         self.searchBar.setFixedWidth(500)
         self.searchBar.setStyleSheet("""
@@ -61,7 +62,7 @@ class MainWindow(QWidget):
 
         # Initialize QTimer
         self.timer = QTimer(self)
-        self.timer.setInterval(500) 
+        self.timer.setInterval(800) 
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.show_completer)
 
@@ -218,7 +219,6 @@ class MainWindow(QWidget):
             options.append('drums')
         if self.checkbox4.isChecked():
             options.append('other')
-        print(options)
 
         if self.audio_streamer:
             self.audio_streamer.change_tracks(options)
@@ -265,7 +265,6 @@ class MainWindow(QWidget):
             elif song_name != 'Unknown':
                 lyrics = syncedlyrics.search(f"[{song_name}]", synced_only=True)
             
-            print(f"[{song_name}] [{artist_name}]")
             if not lyrics:
                 lyrics = 'No lyrics found'
                 self.lyricBox.setText(lyrics)
@@ -399,7 +398,6 @@ class MainWindow(QWidget):
             for song in suggestion:
                 song_name = song.get('name', None)
                 artist_name = song.get('artists', None)
-                print(artist_name)
                 if artist_name:
                     artist_name = artist_name[0].get('name', None)
 

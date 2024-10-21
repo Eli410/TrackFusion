@@ -1,6 +1,4 @@
 import yt_dlp
-import json
-
 
 def download_video_and_audio(url, username='oauth2', password='', output_dir='.'):
     ydl_opts = {

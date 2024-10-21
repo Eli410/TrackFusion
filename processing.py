@@ -5,6 +5,7 @@ import sys
 import demucs.separate
 import math
 
+overlap = 300 # amount of overlap at front and back
 
 def process_audio_sync(filepath, model='hdemucs_mmi'):
     """
@@ -34,7 +35,7 @@ def process_audio_sync(filepath, model='hdemucs_mmi'):
     chunk_length_ms = 10 * 1000
     total_chunks = math.ceil(len(audio) / chunk_length_ms)
 
-    overlap = 100
+
     for i in range(total_chunks):
         
         start = i * chunk_length_ms
@@ -78,3 +79,9 @@ if __name__ == "__main__":
     else:
         audio_file_path = sys.argv[1]
         process_audio_sync(audio_file_path)
+
+# # testing code
+# if __name__ == "__main__":
+#     path = 'testing_files/lYBUbBu4W08.mp3'
+#     process_audio_sync(path)
+

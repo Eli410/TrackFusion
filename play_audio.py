@@ -7,7 +7,7 @@ import shutil
 import threading
 import time
 import traceback
-
+from processing import overlap
 
 class AudioStreamer:
     def __init__(self, source, root_dir):
@@ -106,7 +106,7 @@ class AudioStreamer:
                 frame_size = 1024
 
                 # Calculate 100 ms in samples
-                samples_to_skip = int(0.1 * sample_rate)  # 100 ms of samples to skip at the start and end
+                samples_to_skip = int((overlap / 1000) * sample_rate)  # 100 ms of samples to skip at the start and end
 
                 if self.stream is None:
                     self.stream = self.p.open(format=self.p.get_format_from_width(2),  # Assuming 16-bit audio
@@ -215,7 +215,6 @@ class AudioStreamer:
 
     def pause(self):
         """Pause playback."""
-        print(self.lock)
         with self.lock:
             if self.playing.is_set():
                 self.playing.clear()
@@ -243,7 +242,7 @@ class AudioStreamer:
 
 
 if __name__ == "__main__":
-    source = "testing_files/Coldplay - Viva La Vida (Official Video).mp3"
+    source = "testing_files/lYBUbBu4W08.mp3"
     directory_path = f"temp/hdemucs_mmi"
 
     try:
