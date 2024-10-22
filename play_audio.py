@@ -8,7 +8,7 @@ import threading
 import time
 import traceback
 from processing import overlap
-
+import sys
 class AudioStreamer:
     def __init__(self, source, root_dir):
         self.tracks = [
@@ -37,7 +37,7 @@ class AudioStreamer:
 
     def start_processing(self):
         os.makedirs(self.root_dir, exist_ok=True)
-        self.child = subprocess.Popen(["python", "processing.py", self.source])#, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.child = subprocess.Popen([sys.executable, "processing.py", self.source])#, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
 
     def read_audio_file(self, file_path):

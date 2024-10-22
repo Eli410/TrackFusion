@@ -10,6 +10,5 @@ PyQt6_sip==13.8.0
 soundfile==0.12.1
 syncedlyrics==1.0.1
 yt_dlp==2024.10.7
-ytm==0.1.0
 https://github.com/coletdjnz/yt-dlp-youtube-oauth2/archive/refs/heads/master.zip
 git+https://github.com/tombulled/python-youtube-music.git
