@@ -5,7 +5,7 @@ import sys
 import demucs.separate
 import math
 
-overlap = 300 # amount of overlap at front and back
+overlap = 100 # amount of overlap at front and back
 
 def process_audio_sync(filepath, model='hdemucs_mmi'):
     """

@@ -106,7 +106,7 @@ class AudioStreamer:
                 frame_size = 1024
 
                 # Calculate 100 ms in samples
-                samples_to_skip = int((overlap / 1000) * sample_rate)  # 100 ms of samples to skip at the start and end
+                samples_to_skip = int(((overlap + 25) / 1000) * sample_rate)  # 100 ms of samples to skip at the start and end
 
                 if self.stream is None:
                     self.stream = self.p.open(format=self.p.get_format_from_width(2),  # Assuming 16-bit audio

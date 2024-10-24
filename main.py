@@ -23,7 +23,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Okedoke Karaoke")
+        self.setWindowTitle("TrackFusion")
         # For more size normalization later
         self.screenWidth = 1080
         self.screenHeight = int((self.screenWidth / 16) * 9)
