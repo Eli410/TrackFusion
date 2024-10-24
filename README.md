@@ -46,6 +46,10 @@ To use **TrackFusion**, run the `main.py` script from the command line:
 python main.py
 ```
 
+## Demo
+
+Check out the demo on [YouTube](https://www.youtube.com/watch?v=rqFZlHqk8u8).
+
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
