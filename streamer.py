@@ -13,8 +13,6 @@ from demucs.pretrained import get_model, ModelLoadingError
 from dora.log import fatal
 import torch
 import numpy as np
-from PyQt5 import QtWidgets, QtCore
-import sys
 
 def process(
     audio_array: np.ndarray,
@@ -119,6 +117,7 @@ class AudioStreamer:
         self.audio_queue = queue.Queue()
         self.processed_audio = None
         self.pause_event = threading.Event()
+        self.pause_event.set()  # Start in paused state
         self.stop_event = threading.Event()
         self.lock = threading.Lock()  # To protect shared resources
         
@@ -394,48 +393,3 @@ class AudioStreamer:
             return 0
         return len(self.processed_audio) // (44100 * 2) * 1000
     
-    
-class AudioStreamerApp(QtWidgets.QWidget):
-    def __init__(self, youtube_url, model='htdemucs_mmi'):
-        super().__init__()
-        self.streamer = AudioStreamer(youtube_url, model)
-        self.init_ui()
-
-    def init_ui(self):
-        self.setWindowTitle('Audio Streamer')
-        self.setGeometry(100, 100, 300, 200)
-
-        layout = QtWidgets.QVBoxLayout()
-
-        self.play_button = QtWidgets.QPushButton('Play')
-        self.play_button.clicked.connect(self.toggle_play)
-        layout.addWidget(self.play_button)
-
-        self.track_buttons = {}
-        for track in ['vocals', 'drums', 'bass', 'other']:
-            btn = QtWidgets.QCheckBox(track)
-            btn.setChecked(True)
-            btn.stateChanged.connect(self.update_tracks)
-            layout.addWidget(btn)
-            self.track_buttons[track] = btn
-
-        self.setLayout(layout)
-
-    def toggle_play(self):
-        if self.streamer.is_playing():
-            self.streamer.pause()
-            self.play_button.setText('Play')
-        else:
-            self.streamer.play()
-            self.play_button.setText('Pause')
-
-    def update_tracks(self):
-        selected_tracks = [track for track, btn in self.track_buttons.items() if btn.isChecked()]
-        self.streamer.change_tracks(selected_tracks)
-
-if __name__ == "__main__":
-    youtube_url = "https://www.youtube.com/watch?v=GxldQ9eX2wo"
-    app = QtWidgets.QApplication(sys.argv)
-    window = AudioStreamerApp(youtube_url, model='hdemucs_mmi')
-    window.show()
-    sys.exit(app.exec_())

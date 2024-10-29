@@ -3,16 +3,16 @@ import re
 import cv2
 import ytm
 import imageio.v3 as iio
-from pygame import mixer
 from math import floor
 from PyQt6.QtWidgets import (QWidget, QLabel, QApplication, QLineEdit, QTextEdit, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QCheckBox, QStyledItemDelegate, QCompleter,)
-from PyQt6.QtCore import QTimer, QSize, Qt, QRect, QStringListModel
+                             QHBoxLayout, QPushButton, QCheckBox, QStyledItemDelegate, QCompleter,
+                             QMessageBox,)
+from PyQt6.QtCore import QTimer, QSize, Qt, QRect, QStringListModel, QThread, pyqtSignal, QObject
 from PyQt6.QtGui import QPixmap, QImage, QColor, QFont
-from ytdl import download_video_and_audio
+from ytdl import get_audio_and_thumbnail
 import syncedlyrics
 import signal
-from play_audio import AudioStreamer
+from streamer import AudioStreamer
 import shutil
 import os
 import traceback
@@ -60,11 +60,12 @@ class MainWindow(QWidget):
         self.searchButton.clicked.connect(self.onSearchButtonClick)
         searchLayout.addWidget(self.searchButton)
 
-        # Initialize QTimer
         self.timer = QTimer(self)
-        self.timer.setInterval(800) 
+        self.timer.setInterval(800)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.show_completer)
+
+
 
         # Connect textChanged signal to restart timer
         self.searchBar.textChanged.connect(self.on_text_changed)
@@ -118,6 +119,15 @@ class MainWindow(QWidget):
             }
         """)
 
+
+        self.isRenderingVideo = False
+        self.video = None
+        self.videoFPS = None
+        self.videoTimer = None  # Initialize video timer to None
+        
+        self.videoLabel.setPixmap(QPixmap(600, 540))
+        
+        
         self.isRenderingVideo = False
         self.video = None
         self.videoFPS = None
@@ -238,22 +248,24 @@ class MainWindow(QWidget):
         youTubeLinkRegex = re.compile(r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|embed/|v/)?([A-Za-z0-9_-]{11})(&.*)*$') #Test Later
 
         if (youTubeLinkRegex.fullmatch(self.searchBar.text())):
-            video_url, audio_path, info_dict = download_video_and_audio(self.searchBar.text(), output_dir='temp')
-            ### Video setup
-            self.isRenderingVideo = True
-            self.video = cv2.VideoCapture(video_url)
-            self.videoFPS = self.video.get(cv2.CAP_PROP_FPS)
+            audio_url, thumbnail_url, info_dict = get_audio_and_thumbnail(self.searchBar.text())
 
-            # Setup video timer
-            self.videoTimer = QTimer(self)
-            self.videoTimer.setInterval(int(1000 / self.videoFPS))  # Update video every frame
-            self.videoTimer.timeout.connect(self.updateVideoFrame)
-            self.videoTimer.start()
-        
+            # Set pixmap to the thumbnail_url
+            image = iio.imread(thumbnail_url)
+            print(thumbnail_url)
+            height, width, _ = image.shape
+            aspect_ratio = width / height
+            new_height = 540
+            new_width = int(new_height * aspect_ratio)
+            image = cv2.resize(image, (new_width, new_height))
+            qimage = QImage(image.data, image.shape[1], image.shape[0], QImage.Format.Format_RGB888)
+            frameImagePixmap = QPixmap.fromImage(qimage)
+            self.videoLabel.setPixmap(frameImagePixmap)
+
             ### Audio setup
-            self.audio_streamer = AudioStreamer(audio_path, f'temp/{model}')
+            self.audio_streamer = AudioStreamer(audio_url)
             signal.signal(signal.SIGINT, self.audio_streamer.handle_signal)  # Handle CTRL+C
-            self.audio_streamer.start()
+            self.audio_streamer.start_stream()
             
             ### Lyric setup
             lyrics = None
@@ -280,6 +292,13 @@ class MainWindow(QWidget):
                 self.lyricIndex = 0
                 self.updateLyrics()
                 self.lyricsTimer.start()  # Start lyrics timer
+        else:
+            # show pyqt error dialog
+            error_dialog = QMessageBox(self)
+            error_dialog.setIcon(QMessageBox.Icon.Critical)
+            error_dialog.setText("Invalid YouTube URL")
+            error_dialog.setWindowTitle("Error")
+            error_dialog.exec()
 
     def onPlayButtonClicked(self):
         self.audio_streamer.play()
@@ -296,43 +315,6 @@ class MainWindow(QWidget):
             self.videoTimer.stop()
         if self.lyricsTimer is not None:
             self.lyricsTimer.stop()
-
-
-    def updateVideoFrame(self):
-        try:
-            if self.isRenderingVideo:
-                # Get the current audio position in milliseconds and calculate corresponding frame number
-                current_audio_position = self.audio_streamer.get_pos()
-                frameNumber = current_audio_position * self.videoFPS / 1000
-
-                current_frame_number = self.video.get(cv2.CAP_PROP_POS_FRAMES)
-                if current_frame_number > frameNumber:
-                    self.video.set(cv2.CAP_PROP_POS_FRAMES, frameNumber)
-
-
-                # Handle the case when audio stream position is not available immediately
-                if current_audio_position == 0:
-                    print("Waiting for audio stream to start...")
-                    return  # Optionally, could add a delay or retry mechanism here
-
-                # Retrieve the frame from the video
-                ret, frame = self.video.read()
-                if not ret:
-                    print("Failed to retrieve frame")
-                    self.videoTimer.stop()
-                    return
-                
-                # Convert the frame to RGB format for display
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = frame.shape
-                bytesPerLine = ch * w
-                frameImage = QImage(frame.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
-                frameImagePixmap = QPixmap.fromImage(frameImage)
-                self.videoLabel.setPixmap(frameImagePixmap)
-                    
-        except Exception as e:
-            print(f"Error rendering video: {e}")
-            traceback.print_exc()
 
 
     def renderLyrics(self):
@@ -393,29 +375,21 @@ class MainWindow(QWidget):
                 print(f"Error searching for songs: {e}")
                 self.ytm_api = ytm.YouTubeMusic()
                 suggestion = []
-
+        
             suggestions = []
             for song in suggestion:
-                song_name = song.get('name', None)
-                artist_name = song.get('artists', None)
-                if artist_name:
-                    artist_name = artist_name[0].get('name', None)
-
-                if not artist_name:
-                    s = f"{song_name}"
-                else:
-                    s = f"{song_name} - {artist_name}"
-                suggestions.append((s, song.get('videoId', song.get('id', None))))
+                song_name = song.get('name')
+                artist_name = song.get('artists', [{}])[0].get('name')
+                display_text = f"{song_name} - {artist_name}" if artist_name else song_name
+                suggestions.append((display_text, song.get('videoId', song.get('id'))))
             self.model.set_data(suggestions)
             self.completer.complete()
+            
 
-        
 
 class AutocompleteDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.thumbnail_size = QSize(40, 40)
-        self.padding = 5
 
     def paint(self, painter, option, index):
         super().paint(painter, option, index)
@@ -423,32 +397,12 @@ class AutocompleteDelegate(QStyledItemDelegate):
 
         # Retrieve data
         text = index.data(Qt.ItemDataRole.DisplayRole)
-        thumbnail_url = index.data(Qt.ItemDataRole.UserRole)
-        
-        # Define the rectangle for the thumbnail
-        thumbnail_rect = QRect(
-            option.rect.left() + self.padding,
-            option.rect.top() + (option.rect.height() - self.thumbnail_size.height()) // 2,
-            self.thumbnail_size.width(),
-            self.thumbnail_size.height(),
-        )
-
-        # Draw the thumbnail
-        if thumbnail_url:
-            image = iio.imread(thumbnail_url)
-            qimage = QImage(image.data, image.shape[1], image.shape[0], QImage.Format.Format_RGB888)
-            pixmap = QPixmap.fromImage(qimage)
-            painter.drawPixmap(thumbnail_rect, pixmap.scaled(
-                self.thumbnail_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        else:
-            # Placeholder for missing image
-            painter.fillRect(thumbnail_rect, QColor("gray"))
 
         # Define the rectangle for the text
         text_rect = QRect(
-            thumbnail_rect.right() + self.padding,
+            option.rect.left() + 5,
             option.rect.top(),
-            option.rect.width() - self.thumbnail_size.width() - 3 * self.padding,
+            option.rect.width() - 10,
             option.rect.height(),
         )
 
@@ -459,13 +413,12 @@ class AutocompleteDelegate(QStyledItemDelegate):
         painter.restore()
 
     def sizeHint(self, option, index):
-        return QSize(200, max(self.thumbnail_size.height() + 2 * self.padding, 50))
+        return QSize(200, 50)
 
 class AutocompleteModel(QStringListModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.suggestions = []  # List of tuples (text, image_path)
-        # self.populate_model()
+        self.suggestions = [] 
 
     def populate_model(self):
         display_strings = [s[0] for s in self.suggestions]
@@ -486,8 +439,8 @@ class AutocompleteModel(QStringListModel):
     def set_data(self, suggestions):
         self.suggestions = suggestions
         self.populate_model()
-
-
+    
+    
 def handleClose():
     if window.audio_streamer:
         window.audio_streamer.stop()
@@ -497,8 +450,9 @@ def handleClose():
         window.lyricsTimer.stop()
     app.quit()
 
+
+
 app = QApplication(sys.argv)
-mixer.init()
 window = MainWindow()
 window.show()
 app.aboutToQuit.connect(handleClose)

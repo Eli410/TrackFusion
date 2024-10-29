@@ -34,8 +34,25 @@ def download_video_and_audio(url, username='oauth2', password='', output_dir='.'
 
     return video_url, audio_path, info_dict
 
+def get_audio_and_thumbnail(url):
+    ydl_opts = {
+        'format': 'bestaudio',  # Choose the best audio available
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        audio_url = info_dict.get('url')
+        thumbnail_url = info_dict.get('thumbnail')
+
+    return audio_url, thumbnail_url, info_dict
+
 # Example usage:
 if __name__ == "__main__":
-    video_file, audio_file = download_video_and_audio('https://www.youtube.com/watch?v=2ZBtPf7FOoM')
-    print("Video file:", video_file)
-    print("Audio file:", audio_file)
+    url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+    video_url, audio_path, info_dict = download_video_and_audio(url)
+    print(f"Downloaded video URL: {video_url}")
+    print(f"Downloaded audio path: {audio_path}")
+    audio_url, thumbnail_url, info_dict = get_audio_and_thumbnail(url)
+    print(f"Audio URL: {audio_url}")
+    print(f"Thumbnail URL: {thumbnail_url}")
+    print(f"Video title: {info_dict.get('title')}")
+    print(f"Video description: {info_dict.get('description')}")
