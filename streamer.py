@@ -73,9 +73,9 @@ def process(
     audio_tensor = audio_tensor.float()
     wav = audio_tensor.t()
 
-    ref = wav.mean(0)
-    wav -= ref.mean()
-    wav /= ref.std()
+
+    wav /= 32768.0  # Scale int16 audio data to the range [-1, 1]
+
 
     sources = apply_model(model, wav[None], device=device, shifts=shifts,
                         split=split, overlap=overlap, progress=True,
@@ -87,10 +87,13 @@ def process(
         # Transpose and convert to NumPy array
         track = source.transpose(0, 1).cpu().numpy()
         
-        track = track * 0.1
-        
-        track = (track * 32768).astype(np.int16).flatten()
-        
+        #clip
+        track = np.clip(track, -1, 1)
+
+        track *= 0.8
+
+        track = (track * 32767).astype(np.int16).flatten()
+
         # Assign the processed track to the output dictionary
         out[name] = track
 
@@ -98,7 +101,7 @@ def process(
 
 
 class AudioStreamer:
-    def __init__(self, youtube_url, model='htdemucs'):
+    def __init__(self, model='htdemucs'):
         """
         Initializes the AudioStreamer with the given YouTube URL and processing model.
         
@@ -106,25 +109,30 @@ class AudioStreamer:
             youtube_url (str): The URL of the YouTube video to stream.
             model (str): The initial model to use for audio processing.
         """
-        self.youtube_url = youtube_url
+        self.youtube_url = None
         self.model = model
-        self.selected_tracks = set([
-            'vocals',
-            'drums',
-            'bass',
-            'other'
-            ]) 
+
+        self.selected_tracks = list(get_model(model).sources)
         self.audio_queue = queue.Queue()
         self.processed_audio = None
         self.pause_event = threading.Event()
         self.pause_event.set()  # Start in paused state
         self.stop_event = threading.Event()
         self.lock = threading.Lock()  # To protect shared resources
-        
+        self.start_time = None
         self.process = None
         self.producer_thread = None
         self.consumer_thread = None
+    
+    def set_youtube_url(self, youtube_url):
+        """
+        Sets the YouTube URL for the audio stream.
         
+        Args:
+            youtube_url (str): The URL of the YouTube video to stream.
+        """
+        self.youtube_url = youtube_url
+
     def get_audio_stream(self):
         """
         Extracts the direct audio stream URL from a YouTube video using yt_dlp.
@@ -151,16 +159,19 @@ class AudioStreamer:
         """
         Starts the audio streaming, processing, and playback.
         """
+        if not self.youtube_url:
+            return "YouTube URL not set."
+            
         audio_stream_url = self.get_audio_stream()
         self.process = subprocess.Popen(
             [
                 'ffmpeg',
-                '-i', audio_stream_url,           # Input URL
-                '-f', 's16le',                     # Output format: 16-bit PCM
-                '-acodec', 'pcm_s16le',            # Audio codec
-                '-ar', '44100',                    # Sample rate
-                '-ac', '2',                        # Number of channels
-                'pipe:1'                           # Output to stdout
+                '-i', audio_stream_url,                                   # Input URL
+                '-f', 's16le',                                            # Output format: 16-bit PCM
+                '-acodec', 'pcm_s16le',                                   # Audio codec
+                '-ar', '44100',                                           # Sample rate
+                '-ac', '2',                                               # Number of channels
+                'pipe:1'                                                  # Output to stdout
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL
@@ -273,21 +284,23 @@ class AudioStreamer:
                 if ms_bytes is not None:
                     ms_chunk = np.frombuffer(ms_bytes, dtype=np.int16)
                     if mixed_audio is None:
-                        mixed_audio = ms_chunk.astype(np.float32)
+                        mixed_audio = np.copy(ms_chunk)  # Create a writable copy
                     else:
-                        mixed_audio += ms_chunk.astype(np.float32)
+                        # Ensure the array lengths are equal before addition to avoid broadcasting errors
+                        min_len = min(len(mixed_audio), len(ms_chunk))
+                        mixed_audio[:min_len] += ms_chunk[:min_len]
                 else:
                     print(f"Track '{track_name}' not found in the processing result.")
 
-            if mixed_audio is None:
-                # No tracks selected or tracks missing, use silence
-                mixed_audio = np.zeros(bytes_per_ms // (2 * 2), dtype=np.float32)  # 176 bytes => 44 samples * 2 channels
+            # if mixed_audio is None:
+            #     # No tracks selected or tracks missing, use silence
+            #     mixed_audio = np.zeros(bytes_per_ms // (2 * 2), dtype=np.float32)  # 176 bytes => 44 samples * 2 channels
 
-            # Convert back to int16
-            mixed_audio_int16 = mixed_audio.astype(np.int16)
+            # # Convert back to int16
+            # mixed_audio_int16 = mixed_audio.astype(np.int16)
 
             # Convert to bytes
-            mixed_bytes = mixed_audio_int16.tobytes()
+            mixed_bytes = mixed_audio.tobytes()
 
             # Accumulate into playback_buffer
             playback_buffer.extend(mixed_bytes)
@@ -300,6 +313,9 @@ class AudioStreamer:
                 # Handle pause
                 self.pause_event.wait()
 
+                if self.start_time is None:
+                    self.start_time = time.time()
+                    
                 # Write to the stream
                 stream.write(bytes(playback_data))
 
@@ -311,7 +327,7 @@ class AudioStreamer:
 
         # Play any remaining data in the playback_buffer
         if playback_buffer:
-            stream.write(playback_buffer)
+            stream.write(bytes(playback_buffer))
 
             if self.processed_audio is None:
                 self.processed_audio = playback_buffer
@@ -323,7 +339,6 @@ class AudioStreamer:
         stream.close()
         p.terminate()
 
-
     def play(self):
         """
         Starts or resumes playback.
@@ -332,6 +347,8 @@ class AudioStreamer:
             self.start_stream()
         else:
             self.pause_event.set()
+            if self.start_time is not None:
+                self.start_time += time.time() - self.start_time
             print("Playback resumed.")
 
     def pause(self):
@@ -339,22 +356,25 @@ class AudioStreamer:
         Pauses playback.
         """
         self.pause_event.clear()
+        if self.start_time is not None:
+            self.start_time = time.time() - self.start_time
         print("Playback paused.")
 
     def stop(self):
         """
-        Stops playback and terminates all threads and subprocesses.
+        Stops playback and terminates all threads and subprocesses immediately.
         """
         self.stop_event.set()
         self.pause_event.set()  # In case it's paused
         if self.process:
             self.process.terminate()
+            self.process.kill()  # Ensure the process is killed immediately
             self.process.wait()
 
         if self.producer_thread:
-            self.producer_thread.join()
+            self.producer_thread.join(timeout=1)
         if self.consumer_thread:
-            self.consumer_thread.join()
+            self.consumer_thread.join(timeout=1)
         print("Playback stopped.")
 
     def change_tracks(self, tracks):
@@ -389,7 +409,23 @@ class AudioStreamer:
         Returns:
             int: The current position in milliseconds.
         """
-        if self.processed_audio is None:
-            return 0
-        return len(self.processed_audio) // (44100 * 2) * 1000
+        if self.start_time is not None:
+            return int((time.time() - self.start_time) * 1000)
+        return 0
     
+    def cleanup(self):
+        """
+        destroys the streamer and frees up resources
+        """
+        self.stop()
+        self.processed_audio = None
+        self.start_time = None
+        self.process = None
+        self.producer_thread = None
+        self.consumer_thread = None
+        self.audio_queue = queue.Queue()
+        self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+        self.pause_event.set()
+        self.lock = threading.Lock()
+        print("Streamer cleaned up.")
