@@ -13,7 +13,9 @@ import syncedlyrics
 import signal
 from streamer import AudioStreamer
 
-from qtComponents import AutocompleteDelegate, AutocompleteModel, ytdl_Worker
+from qtComponents import AutocompleteDelegate, AutocompleteModel, ytdl_Worker, VideoWindow
+import requests
+import numpy as np
 
 model = 'hdemucs_mmi'
 
@@ -78,6 +80,7 @@ class MainWindow(QWidget):
         self.timer.timeout.connect(self.show_completer)
 
         self.thumbnail = None
+        self.currentScreen = None
         self.isRenderingLyrics = False
         
         # Connect textChanged signal to restart timer
@@ -114,38 +117,15 @@ class MainWindow(QWidget):
 
         checkboxLayout.addStretch(1)
         
-        self.videoLabel = QLabel(self)
-        self.videoLabel.setStyleSheet("""
-            QLabel {
-                border: 4px solid gray;
-                border-radius: 10px;
-            }
-        """)
+        self.videoLabel = VideoWindow(self)
+        self.videoLabel.clicked.connect(self.togglePlayPause)
 
 
-        self.isRenderingVideo = False
+        self.isPaused = False
         self.video = None
         self.videoFPS = None
         self.videoTimer = None  # Initialize video timer to None
                         
-        # Create layout that holds control buttons
-        videoControlLayout = QHBoxLayout()
-        
-        self.playButton = QPushButton(self)
-        self.playButton.setText("Play")
-        self.playButton.setFixedWidth(75)
-        self.playButton.setFixedHeight(50)
-        self.playButton.clicked.connect(self.onPlayButtonClicked)
-
-        self.pauseButton = QPushButton(self)
-        self.pauseButton.setText("Pause")
-        self.pauseButton.setFixedWidth(75)
-        self.pauseButton.setFixedHeight(50)
-        self.pauseButton.clicked.connect(self.onPauseButtonClicked)
-
-        
-        videoControlLayout.addWidget(self.playButton)
-        videoControlLayout.addWidget(self.pauseButton)
 
         # Setup lyrics timer
         self.lyricsTimer = QTimer(self)
@@ -156,7 +136,6 @@ class MainWindow(QWidget):
         leftScreenLayout.addLayout(searchLayout)
         leftScreenLayout.addLayout(checkboxLayout)
         leftScreenLayout.addWidget(self.videoLabel)
-        leftScreenLayout.addLayout(videoControlLayout)
 
         screenLayout.addLayout(leftScreenLayout)
         # screenLayout.addLayout(lyricBoxLayout)
@@ -178,20 +157,42 @@ class MainWindow(QWidget):
             self.audio_streamer.change_tracks(options)
 
     def get_thumbnail(self, url):
-        image = iio.imread(url)
-        height, width, _ = image.shape
-        aspect_ratio = width / height
-        new_width = self.videoLabel.width()
-        new_height = int(new_width / aspect_ratio)
-        image = cv2.resize(image, (new_width, new_height))
-        qimage = QImage(image.data, image.shape[1], image.shape[0], QImage.Format.Format_RGB888)
-        frameImagePixmap = QPixmap.fromImage(qimage)
-        return frameImagePixmap
+        # Download the image from the URL
+        response = requests.get(url)
+        image_array = np.array(bytearray(response.content), dtype=np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        
+        # Check if the image was loaded (not empty)
+        if image is None:
+            print("Failed to load image")
+            return None
+
+        # Convert from BGR to RGB
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # Calculate the new dimensions
+        height, width, channels = image.shape
+        if channels == 3:  # Check again, just in case
+            aspect_ratio = width / height
+            new_width = self.videoLabel.width()
+            new_height = int(new_width / aspect_ratio)
+            
+            # Resize the image
+            image = cv2.resize(image, (new_width, new_height))
+            
+            # Create QImage with the correct format and stride
+            qimage = QImage(image.data, image.shape[1], image.shape[0], image.shape[1] * 3, QImage.Format.Format_RGB888)
+            
+            # Convert to QPixmap for display
+            frameImagePixmap = QPixmap.fromImage(qimage)
+            return frameImagePixmap
+
 
     def setup_playback(self, audio_url, thumbnail_url, info_dict, loadingMsg):
         loadingMsg.accept()
         # Set pixmap to the thumbnail_url
         self.thumbnail = self.get_thumbnail(thumbnail_url)
+        self.currentScreen = self.videoLabel
         self.videoLabel.setPixmap(self.thumbnail)
 
         ### Audio setup
@@ -201,17 +202,13 @@ class MainWindow(QWidget):
         
         ### Lyric setup
         lyrics = None
-        res = self.ytm_api.search_songs(info_dict['title'])['items'][0]
-        song_name = res['name'] or 'Unknown'
-        artist_name = res['artists'][0]['name'] or 'Unknown'
-        if song_name != 'Unknown' and artist_name != 'Unknown':
-            lyrics = syncedlyrics.search(f"[{song_name}] [{artist_name}]", synced_only=True)
-        elif song_name != 'Unknown':
-            lyrics = syncedlyrics.search(f"[{song_name}]", synced_only=True)
-        
+        title = info_dict['title']
+        artist = info_dict['artist'][0]
+
+        lyrics = syncedlyrics.search(f"[{title}] [{artist}]", synced_only=True)
+
         if not lyrics:
             lyrics = 'No lyrics found'
-            # self.lyricBox.setText(lyrics)
         else:
             self.isRenderingLyrics = True
             tempLyrics = lyrics.splitlines()
@@ -224,6 +221,8 @@ class MainWindow(QWidget):
             self.lyricIndex = 0
             self.lyricsTimer.start()
             self.updateLyrics()
+        
+        self.isPaused = False
 
     def onSearchButtonClick(self):
         if self.audio_streamer:
@@ -249,21 +248,27 @@ class MainWindow(QWidget):
             error_dialog.setWindowTitle("Error")
             error_dialog.exec()
 
-    def onPlayButtonClicked(self):
-        self.audio_streamer.play()
-        self.isRenderingVideo = True
-        if self.videoTimer is not None:
-            self.videoTimer.start()
-        if self.lyricsTimer is not None:
-            self.lyricsTimer.start()
+    def togglePlayPause(self):
+        if self.isPaused:
+            self.audio_streamer.play()
+            self.isRenderingVideo = True
+            if self.videoTimer is not None:
+                self.videoTimer.start()
+            if self.lyricsTimer is not None:
+                self.lyricsTimer.start()
+            
+            self.isPaused = False
 
-    def onPauseButtonClicked(self):
-        self.audio_streamer.pause()
-        self.isRenderingVideo = False
-        if self.videoTimer is not None:
-            self.videoTimer.stop()
-        if self.lyricsTimer is not None:
-            self.lyricsTimer.stop()
+        else:
+            self.audio_streamer.pause()
+            self.isRenderingVideo = False
+            if self.videoTimer is not None:
+                self.videoTimer.stop()
+            if self.lyricsTimer is not None:
+                self.lyricsTimer.stop()
+            
+            self.isPaused = True
+
 
 
     def renderLyrics(self):
@@ -321,12 +326,6 @@ class MainWindow(QWidget):
             
             painter.end()
             self.videoLabel.setPixmap(current_pixmap)
-            # Drawing the main text
-            painter.setPen(QPen(textColor))
-            painter.drawText(current_pixmap.rect(), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, lyrics_text)
-            
-            painter.end()
-            self.videoLabel.setPixmap(current_pixmap)
 
 
     def on_text_changed(self, text):
@@ -367,11 +366,10 @@ class MainWindow(QWidget):
     
     
 def handleClose():
-    window.audio_streamer.cleanup()
+    # window.audio_streamer.cleanup()
     if window.lyricsTimer:
         window.lyricsTimer.stop()
     app.quit()
-    sys.exit()
 
 
 

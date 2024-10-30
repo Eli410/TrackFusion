@@ -1,0 +1,9 @@
+demucs
+imageio
+numpy
+opencv_python
+PyAudio
+PyQt6
+syncedlyrics
+yt_dlp
+git+https://github.com/tombulled/python-youtube-music.git

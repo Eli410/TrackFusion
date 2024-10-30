@@ -75,3 +75,30 @@ class AutocompleteModel(QStringListModel):
     def set_data(self, suggestions):
         self.suggestions = suggestions
         self.populate_model()
+
+class VideoWindow(QLabel):
+    clicked = pyqtSignal()  # Signal for click events
+    hovered = pyqtSignal(bool)  # Signal for hover events, bool indicates hover state
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            QLabel {
+                border: 4px solid gray;
+                border-radius: 10px;
+            }
+        """)
+        self.setMouseTracking(True)  # Important to detect mouse hover when no button is pressed
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()  # Emit the clicked signal on left mouse button press
+
+    def enterEvent(self, event):
+        self.hovered.emit(True)  # Emit the hovered signal with True when mouse enters the label
+
+    def leaveEvent(self, event):
+        self.hovered.emit(False)  # Emit the hovered signal with False when mouse leaves the label
+
+
+

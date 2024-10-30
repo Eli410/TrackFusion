@@ -114,15 +114,36 @@ class AudioStreamer:
 
         self.selected_tracks = list(get_model(model).sources)
         self.audio_queue = queue.Queue()
-        self.processed_audio = None
+        self.processed_audio = []  
         self.pause_event = threading.Event()
         self.pause_event.set()  # Start in paused state
         self.stop_event = threading.Event()
         self.lock = threading.Lock()  # To protect shared resources
-        self.start_time = None
+        # self.start_time = None
         self.process = None
         self.producer_thread = None
         self.consumer_thread = None
+        self.new_data_event = threading.Event()
+        self.playback_position = 0 
+        self.progress = 0
+        self.producer_finished = False
+        self.start_time = None
+        self.samples_per_second = 44100
+        self.channels = 2
+        self.bytes_per_sample = 2  # 16-bit PCM
+        
+        # Initialize timing variables
+        self.samples_per_second = 44100
+        self.channels = 2
+        self.bytes_per_sample = 2  # 16-bit PCM
+        self.bytes_per_second = self.samples_per_second * self.channels * self.bytes_per_sample  # 176400 bytes
+        self.chunk_size = self.bytes_per_second * 10  # 10 seconds of audio
+
+        self.samples_per_ms_exact = self.samples_per_second / 1000  # 44.1 samples per ms
+        self.bytes_per_ms_exact = self.samples_per_ms_exact * self.channels * self.bytes_per_sample  # 176.4 bytes per ms
+
+        self.processed_audio_buffer = bytearray()  # Buffer to accumulate playback data
+
     
     def set_youtube_url(self, youtube_url):
         """
@@ -184,16 +205,18 @@ class AudioStreamer:
 
     def _producer(self):
         """
-        Producer thread function: Reads audio data, processes it, and enqueues it for playback in 1 ms chunks.
+        Producer thread function: Reads 10-second chunks of audio data, processes them,
+        splits into 100 ms chunks, and stores them for playback.
         """
         samples_per_second = 44100
         channels = 2
         bytes_per_sample = 2  # 16-bit PCM
         bytes_per_second = samples_per_second * channels * bytes_per_sample  # 44100 * 2 * 2 = 176400 bytes
-        chunk_size = bytes_per_second * 10  # 1 second of audio
+        chunk_duration = 10  # 10 seconds
+        chunk_size = bytes_per_second * chunk_duration  # 10 seconds of audio: 1,764,000 bytes
 
-        samples_per_ms = samples_per_second // 1000  # 44 samples per ms
-        bytes_per_ms = samples_per_ms * channels * bytes_per_sample  # 44 * 2 * 2 = 176 bytes
+        samples_per_100ms = int(samples_per_second * 0.1)  # 4410 samples per 100 ms
+        bytes_per_100ms = samples_per_100ms * channels * bytes_per_sample  # 4410 * 2 * 2 = 17,640 bytes
 
         while not self.stop_event.is_set():
             # Handle pause
@@ -204,9 +227,10 @@ class AudioStreamer:
                 break  # End of stream
 
             # Ensure that data length is a multiple of bytes_per_sample * channels
-            if len(data) % (bytes_per_sample * channels) != 0:
+            frame_size = bytes_per_sample * channels
+            if len(data) % frame_size != 0:
                 # Pad the data to make it aligned
-                padding = (bytes_per_sample * channels) - (len(data) % (bytes_per_sample * channels))
+                padding = frame_size - (len(data) % frame_size)
                 data += b'\x00' * padding
 
             # Convert byte data to a NumPy array
@@ -220,33 +244,42 @@ class AudioStreamer:
                 print(f"Error during processing: {e}")
                 continue
 
-            # Split each track's data into 1 ms chunks
+            # Split each track's data into 100 ms chunks
             track_chunks = {}
             for track_name, track_data in result.items():
                 total_samples = len(track_data)
-                # Calculate the number of full ms chunks
-                num_ms = total_samples // samples_per_ms
-                # Truncate to full ms chunks
-                track_data = track_data[:num_ms * samples_per_ms]
-                # Reshape to (num_ms, samples_per_ms)
-                track_chunks[track_name] = track_data.reshape(num_ms, samples_per_ms)
+                # Calculate the number of full 100 ms chunks
+                num_chunks = total_samples // samples_per_100ms
+                # Truncate to full 100 ms chunks
+                track_data = track_data[:num_chunks * samples_per_100ms]
+                # Reshape to (num_chunks, samples_per_100ms)
+                track_chunks[track_name] = track_data.reshape(num_chunks, samples_per_100ms)
 
-            num_ms = min(len(chunks) for chunks in track_chunks.values())
+            # Determine the number of 100 ms chunks available
+            num_chunks = min(len(chunks) for chunks in track_chunks.values())
 
-            for ms in range(num_ms):
-                ms_dict = {}
+            for chunk_idx in range(num_chunks):
+                chunk_dict = {}
                 for track_name, chunks in track_chunks.items():
-                    ms_chunk = chunks[ms]
-                    ms_bytes = ms_chunk.tobytes()
-                    ms_dict[track_name] = ms_bytes
-                self.audio_queue.put(ms_dict)
+                    chunk = chunks[chunk_idx]
+                    chunk_bytes = chunk.tobytes()
+                    chunk_dict[track_name] = chunk_bytes
 
-        # Signal the consumer that production is done
-        self.audio_queue.put(None)
+                # Store the chunk_dict in processed_audio
+                with self.lock:
+                    self.processed_audio.append(chunk_dict)
+                # Notify the consumer that new data is available
+                self.new_data_event.set()
+
+        # Signal that production is done
+        self.producer_finished = True
+        # Notify the consumer in case it's waiting
+        self.new_data_event.set()
 
     def _consumer(self):
         """
-        Consumer thread function: Dequeues processed audio data in 1 ms chunks, mixes selected tracks, and plays it using PyAudio.
+        Consumer thread function: Reads 100 ms chunks of processed audio data,
+        mixes selected tracks, and plays it using PyAudio.
         """
         p = pyaudio.PyAudio()
         stream = p.open(format=pyaudio.paInt16,
@@ -255,49 +288,52 @@ class AudioStreamer:
                         output=True,
                         frames_per_buffer=1024)
 
-        playback_chunk_duration = 0.1  # 100 milliseconds
         bytes_per_second = 44100 * 2 * 2  # 44100 samples/sec * 2 channels * 2 bytes/sample
-        playback_chunk_size = int(bytes_per_second * playback_chunk_duration)  # 100 ms => 176400 * 0.1 = 17640 bytes
+        bytes_per_100ms = int(bytes_per_second * 0.1)  # 100 ms => 17,640 bytes
 
-        bytes_per_ms = 44100 * 2 * 2 // 1000  # 176 bytes per millisecond
-        chunks_per_playback = int(playback_chunk_duration * 1000)  # 100 chunks of 1 ms
-
-        buffer = bytearray()
         playback_buffer = bytearray()
 
         while not self.stop_event.is_set():
-            try:
-                ms_dict = self.audio_queue.get(timeout=1)
-            except queue.Empty:
-                continue
+            with self.lock:
+                if not self.processed_audio:
+                    self.processed_audio = []
+                if self.playback_position >= len(self.processed_audio):
+                    if self.producer_finished:
+                        break  # No more data to play
+                    else:
+                        # Release lock and wait for new data
+                        self.lock.release()
+                        self.new_data_event.wait(timeout=1)
+                        self.new_data_event.clear()
+                        self.lock.acquire()
+                        continue
 
-            if ms_dict is None:
-                break  # No more data to play
+                # Get the next 100 ms chunk
+                chunk_index = self.playback_position
+                processed_chunk = self.processed_audio[chunk_index]
+                self.playback_position += 1
+                selected_tracks = self.selected_tracks.copy()
 
             # Mix the selected tracks
             mixed_audio = None
-            with self.lock:
-                selected_tracks = self.selected_tracks.copy()
-
             for track_name in selected_tracks:
-                ms_bytes = ms_dict.get(track_name)
-                if ms_bytes is not None:
-                    ms_chunk = np.frombuffer(ms_bytes, dtype=np.int16)
+                chunk_bytes = processed_chunk.get(track_name)
+                if chunk_bytes is not None:
+                    chunk_data = np.frombuffer(chunk_bytes, dtype=np.int16)
                     if mixed_audio is None:
-                        mixed_audio = np.copy(ms_chunk)  # Create a writable copy
+                        mixed_audio = np.copy(chunk_data)  # Create a writable copy
                     else:
-                        # Ensure the array lengths are equal before addition to avoid broadcasting errors
-                        min_len = min(len(mixed_audio), len(ms_chunk))
-                        mixed_audio[:min_len] += ms_chunk[:min_len]
+                        # Prevent overflow by using a higher dtype
+                        mixed_audio = mixed_audio.astype(np.int32) + chunk_data.astype(np.int32)
+                        # Clip to int16 range
+                        np.clip(mixed_audio, -32768, 32767, out=mixed_audio)
+                        mixed_audio = mixed_audio.astype(np.int16)
                 else:
                     print(f"Track '{track_name}' not found in the processing result.")
 
-            # if mixed_audio is None:
-            #     # No tracks selected or tracks missing, use silence
-            #     mixed_audio = np.zeros(bytes_per_ms // (2 * 2), dtype=np.float32)  # 176 bytes => 44 samples * 2 channels
-
-            # # Convert back to int16
-            # mixed_audio_int16 = mixed_audio.astype(np.int16)
+            if mixed_audio is None:
+                # If no tracks are selected or available, play silence
+                mixed_audio = np.zeros(bytes_per_100ms // (2 * 2), dtype=np.int16)
 
             # Convert to bytes
             mixed_bytes = mixed_audio.tobytes()
@@ -305,39 +341,53 @@ class AudioStreamer:
             # Accumulate into playback_buffer
             playback_buffer.extend(mixed_bytes)
 
-            if len(playback_buffer) >= playback_chunk_size:
+            if len(playback_buffer) >= bytes_per_100ms:
                 # Extract exactly 100 ms
-                playback_data = playback_buffer[:playback_chunk_size]
-                playback_buffer = playback_buffer[playback_chunk_size:]
+                playback_data = playback_buffer[:bytes_per_100ms]
+                playback_buffer = playback_buffer[bytes_per_100ms:]
 
                 # Handle pause
                 self.pause_event.wait()
 
                 if self.start_time is None:
                     self.start_time = time.time()
-                    
+
                 # Write to the stream
                 stream.write(bytes(playback_data))
 
                 # Store processed audio if needed
-                if self.processed_audio is None:
-                    self.processed_audio = playback_data
+                if hasattr(self, 'full_played_audio'):
+                    self.full_played_audio += playback_data
                 else:
-                    self.processed_audio += playback_data
+                    self.full_played_audio = playback_data
 
         # Play any remaining data in the playback_buffer
         if playback_buffer:
             stream.write(bytes(playback_buffer))
 
-            if self.processed_audio is None:
-                self.processed_audio = playback_buffer
+            if hasattr(self, 'full_played_audio'):
+                self.full_played_audio += playback_buffer
             else:
-                self.processed_audio += playback_buffer
+                self.full_played_audio = playback_buffer
 
         # Cleanup PyAudio resources
         stream.stop_stream()
         stream.close()
         p.terminate()
+
+
+
+    def seek(self, position_in_ms):
+        """
+        Seeks to the specified position in milliseconds in the processed audio.
+        If the position is beyond the processed audio, the consumer will wait until data is available.
+        """
+        with self.lock:
+            if position_in_ms < 0:
+                position_in_ms = 0
+            self.playback_position = position_in_ms
+            # Notify the consumer in case it's waiting
+            self.new_data_event.set()
 
     def play(self):
         """
@@ -347,8 +397,8 @@ class AudioStreamer:
             self.start_stream()
         else:
             self.pause_event.set()
-            if self.start_time is not None:
-                self.start_time += time.time() - self.start_time
+            # if self.start_time is not None:
+            #     self.start_time += time.time() - self.start_time
             print("Playback resumed.")
 
     def pause(self):
@@ -356,8 +406,8 @@ class AudioStreamer:
         Pauses playback.
         """
         self.pause_event.clear()
-        if self.start_time is not None:
-            self.start_time = time.time() - self.start_time
+        # if self.start_time is not None:
+        #     self.start_time = time.time() - self.start_time
         print("Playback paused.")
 
     def stop(self):
@@ -404,14 +454,20 @@ class AudioStreamer:
 
     def get_pos(self):
         """
-        Returns the current position in the audio stream.
-        
-        Returns:
-            int: The current position in milliseconds.
+        Returns the current playback position in milliseconds.
         """
-        if self.start_time is not None:
-            return int((time.time() - self.start_time) * 1000)
-        return 0
+        with self.lock:
+            return self.playback_position * 100  # Convert units back to ms
+
+
+    def get_total_processed_length(self):
+        """
+        Returns the total length of the processed audio in milliseconds.
+        """
+        with self.lock:
+            if self.processed_audio:
+                return len(self.processed_audio)
+            return 0
     
     def cleanup(self):
         """
@@ -419,7 +475,6 @@ class AudioStreamer:
         """
         self.stop()
         self.processed_audio = None
-        self.start_time = None
         self.process = None
         self.producer_thread = None
         self.consumer_thread = None
@@ -429,3 +484,9 @@ class AudioStreamer:
         self.pause_event.set()
         self.lock = threading.Lock()
         print("Streamer cleaned up.")
+
+# Example usage:
+if __name__ == "__main__":
+    streamer = AudioStreamer()
+    streamer.set_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ")  # Example URL
+    streamer.start_stream()
