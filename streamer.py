@@ -40,8 +40,8 @@ def process(
     device = device or ("cuda" if th.cuda.is_available() else "cpu")
 
     try:
-        if model is None:
-            model = get_model('htdemucs')
+        # if model is None:
+        #     model = get_model('htdemucs')
         model = get_model(model)  
     except ModelLoadingError as error:
         fatal(error.args[0])
@@ -202,6 +202,18 @@ class AudioStreamer:
         self.producer_thread.start()
         self.consumer_thread.start()
 
+    def set_model(self, model):
+        """
+        Sets the processing model for the audio stream.
+        
+        Args:
+            model (str): The name of the processing model to use.
+        """
+        self.model = model
+        temp = get_model(self.model)
+        self.selected_tracks = list(temp.sources)
+        
+        
     def _producer(self):
         """
         Producer thread function: Reads 10-second chunks of audio data, processes them,
@@ -494,6 +506,6 @@ class AudioStreamer:
 
 # Example usage:
 if __name__ == "__main__":
-    streamer = AudioStreamer()
+    streamer = AudioStreamer(model = 'htdemucs_6s')
     streamer.set_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ")  # Example URL
     streamer.start_stream()

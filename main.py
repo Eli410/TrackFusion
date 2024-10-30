@@ -4,9 +4,9 @@ import cv2
 import ytm
 from PyQt6.QtWidgets import (QWidget, QLabel, QApplication, QLineEdit, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QCheckBox, QCompleter,
-                             QMessageBox,)
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QPixmap, QImage, QColor, QFont, QPainter, QPen
+                             QMessageBox, QMenuBar, QToolBar, QMainWindow)
+from PyQt6.QtCore import QTimer, Qt, QSize
+from PyQt6.QtGui import QPixmap, QImage, QColor, QFont, QPainter, QPen, QIcon, QAction
 import syncedlyrics
 import signal
 from streamer import AudioStreamer
@@ -17,9 +17,41 @@ import numpy as np
 from LRC import LRCParser
 
 
-model = 'hdemucs_mmi'
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("TrackFusion")
+        self.mainScreen = MainScreen()
+        self.setCentralWidget(self.mainScreen)
+        self.setGeometry(0, 0, self.mainScreen.screenWidth, self.mainScreen.screenHeight)
+        self._createMenuBar()
+        self.show()
 
-class MainWindow(QWidget):
+    def _createMenuBar(self):
+        menuBar = self.menuBar()
+        # Create a model menu
+        self.modelMenu = menuBar.addMenu('Model')
+        
+        # Add model options to the menu
+        self.modelOptions = [
+            'hdemucs_mmi', 
+            'htdemucs', 
+            'htdemucs_ft',
+            'htdemucs_6s', 
+            'mdx',
+            'mdx_extra',
+            'mdx_q',
+            'mdx_extra_q']
+        
+        for option in self.modelOptions:
+            if option == self.mainScreen.audio_streamer.model:
+                action = self.modelMenu.addAction(option)
+                action.setChecked(True)
+                continue
+            action = self.modelMenu.addAction(option)
+            action.triggered.connect(lambda _, option=option: self.mainScreen.change_model(option))
+
+class MainScreen(QWidget):
     def __init__(self):
         super().__init__()
         self.audio_streamer = AudioStreamer()
@@ -28,7 +60,6 @@ class MainWindow(QWidget):
         self.screenWidth = 1080
         self.screenHeight = int((self.screenWidth / 16) * 9)
         self.setGeometry(0, 0, self.screenWidth, self.screenHeight)
-        
         # Center the window on the screen
         screen = QApplication.primaryScreen().availableGeometry()
         x = (screen.width() - self.screenWidth) // 2
@@ -110,19 +141,12 @@ class MainWindow(QWidget):
         # Optional: Adjust completer popup size
         self.completer.popup().setMinimumWidth(500)
         self.completer.popup().setMinimumHeight(200)
-        checkboxLayout = QHBoxLayout()
+        self.checkboxLayout = QHBoxLayout()
 
         self.track_checkboxes = []
-        for track in self.audio_streamer.selected_tracks[::-1]:
+        self.update_checkboxes()
 
-            checkbox = QCheckBox(track, self)
-            checkbox.setChecked(True)
-            checkboxLayout.addStretch(1)
-            checkboxLayout.addWidget(checkbox)
-            checkbox.stateChanged.connect(self.onCheckboxChange)
-            self.track_checkboxes.append(checkbox)
-
-        checkboxLayout.addStretch(1)
+        self.checkboxLayout.addStretch(1)
         
         self.videoLabel = VideoWindow(self)
         self.videoLabel.clicked.connect(self.togglePlayPause)
@@ -141,7 +165,7 @@ class MainWindow(QWidget):
         
         ### Show screen
         leftScreenLayout.addLayout(searchLayout)
-        leftScreenLayout.addLayout(checkboxLayout)
+        leftScreenLayout.addLayout(self.checkboxLayout)
         leftScreenLayout.addWidget(self.videoLabel)
 
         screenLayout.addLayout(leftScreenLayout)
@@ -160,10 +184,35 @@ class MainWindow(QWidget):
         # self.debugDisplay.setText(f"{curr_time / 1000:.2f} Seconds")
         self.debugDisplay.setText(f"{len(self.audio_streamer.buffer)} Bytes")
 
+    def update_checkboxes(self):
+        # Clear the existing checkboxes and stretch
+        while self.checkboxLayout.count():
+            item = self.checkboxLayout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+        
+        self.track_checkboxes = []
+        for track in self.audio_streamer.selected_tracks[::-1]:
+            checkbox = QCheckBox(track, self)
+            checkbox.setChecked(True)
+            self.checkboxLayout.addStretch(1)
+            self.checkboxLayout.addWidget(checkbox)
+            checkbox.stateChanged.connect(self.onCheckboxChange)
+            self.track_checkboxes.append(checkbox)
+        
+        self.checkboxLayout.addStretch(1)  # Add a single stretch at the end
+
     def onCheckboxChange(self):
         options = [checkbox.text() for checkbox in self.track_checkboxes if checkbox.isChecked()]
         if self.audio_streamer:
             self.audio_streamer.change_tracks(options)
+
+    def change_model(self, model):
+        self.audio_streamer.set_model(model)
+        print(self.audio_streamer.selected_tracks)
+        self.update_checkboxes()
+        
 
     def get_thumbnail(self, url):
         # Download the image from the URL
@@ -228,20 +277,7 @@ class MainWindow(QWidget):
             lyrics = LRCParser(lyrics)
             lyrics.parse(word_level=self.word_level_lyrics)
 
-            # tempLyrics = lyrics.strip().splitlines()
-            # for i in range(len(tempLyrics)):
-            #     if tempLyrics[i].find(']') == len(tempLyrics[i]) - 1 or tempLyrics[i].find(']') == -1:
-            #         tempLyrics[i] = None
-            #         continue
-                
-            #     if not self.word_level_lyrics:
-            #         tempLyrics[i] = re.sub(r'<\d{2}:\d{2}\.\d{2}>', '', tempLyrics[i])
-            #         minutes, seconds = tempLyrics[i][1:9].split(":")
-            #         minutes, seconds = int(minutes), float(seconds)
-            #         milliseconds = int(floor((minutes * 60 + seconds) * 1000))
-            #         tempLyrics[i] = (milliseconds, tempLyrics[i][tempLyrics[i].index(']')+1:].strip())
-            
-            self.lyrics = [(line.timestamp * 1000, line.text) for line in lyrics.get_lines()]
+            self.lyrics = [(line.timestamp_ms, line.text) for line in lyrics.get_lines()]
             self.lyricIndex = 0
             self.lyricsTimer.start()
             self.updateLyrics()
@@ -400,8 +436,11 @@ class MainWindow(QWidget):
     
 def handleClose():
     # window.audio_streamer.cleanup()
-    if window.lyricsTimer:
-        window.lyricsTimer.stop()
+    if window.mainScreen.audio_streamer:
+        window.mainScreen.audio_streamer.cleanup()
+    if window.mainScreen.lyricsTimer:
+        window.mainScreen.lyricsTimer.stop()
+
     app.quit()
 
 
