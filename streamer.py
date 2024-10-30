@@ -131,7 +131,7 @@ class AudioStreamer:
         self.samples_per_second = 44100
         self.channels = 2
         self.bytes_per_sample = 2  # 16-bit PCM
-        
+        self.full_played_audio = []
         # Initialize timing variables
         self.samples_per_second = 44100
         self.channels = 2
@@ -143,8 +143,7 @@ class AudioStreamer:
         self.bytes_per_ms_exact = self.samples_per_ms_exact * self.channels * self.bytes_per_sample  # 176.4 bytes per ms
 
         self.processed_audio_buffer = bytearray()  # Buffer to accumulate playback data
-
-    
+        self.buffer = bytearray() 
     def set_youtube_url(self, youtube_url):
         """
         Sets the YouTube URL for the audio stream.
@@ -294,22 +293,22 @@ class AudioStreamer:
         playback_buffer = bytearray()
 
         while not self.stop_event.is_set():
+            self.buffer = playback_buffer
             with self.lock:
                 if not self.processed_audio:
                     self.processed_audio = []
                 if self.playback_position >= len(self.processed_audio):
-                    if self.producer_finished:
-                        break  # No more data to play
-                    else:
-                        # Release lock and wait for new data
-                        self.lock.release()
-                        self.new_data_event.wait(timeout=1)
-                        self.new_data_event.clear()
-                        self.lock.acquire()
-                        continue
+                    # Release lock and wait for new data
+                    self.lock.release()
+                    self.new_data_event.wait(timeout=1)
+                    self.new_data_event.clear()
+                    self.lock.acquire()
+                    continue
 
                 # Get the next 100 ms chunk
                 chunk_index = self.playback_position
+                # if chunk_index >= len(self.processed_audio) and self.producer_finished:
+                #     return  # End of stream
                 processed_chunk = self.processed_audio[chunk_index]
                 self.playback_position += 1
                 selected_tracks = self.selected_tracks.copy()
@@ -352,6 +351,7 @@ class AudioStreamer:
                 if self.start_time is None:
                     self.start_time = time.time()
 
+                self.progress += len(playback_data) / self.samples_per_second
                 # Write to the stream
                 stream.write(bytes(playback_data))
 
@@ -457,7 +457,7 @@ class AudioStreamer:
         Returns the current playback position in milliseconds.
         """
         with self.lock:
-            return self.playback_position * 100  # Convert units back to ms
+            return len(self.full_played_audio) / self.bytes_per_ms_exact
 
 
     def get_total_processed_length(self):
@@ -483,6 +483,13 @@ class AudioStreamer:
         self.pause_event = threading.Event()
         self.pause_event.set()
         self.lock = threading.Lock()
+        self.new_data_event = threading.Event()
+        self.playback_position = 0
+        self.progress = 0
+        self.producer_finished = False
+        self.full_played_audio = []
+        self.start_time = None
+
         print("Streamer cleaned up.")
 
 # Example usage:

@@ -2,12 +2,10 @@ import sys
 import re
 import cv2
 import ytm
-import imageio.v3 as iio
-from math import floor
 from PyQt6.QtWidgets import (QWidget, QLabel, QApplication, QLineEdit, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QCheckBox, QStyledItemDelegate, QCompleter,
+                             QHBoxLayout, QPushButton, QCheckBox, QCompleter,
                              QMessageBox,)
-from PyQt6.QtCore import QTimer, QSize, Qt, QRect, QStringListModel, pyqtSignal, QThread
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QPixmap, QImage, QColor, QFont, QPainter, QPen
 import syncedlyrics
 import signal
@@ -16,6 +14,8 @@ from streamer import AudioStreamer
 from qtComponents import AutocompleteDelegate, AutocompleteModel, ytdl_Worker, VideoWindow
 import requests
 import numpy as np
+from LRC import LRCParser
+
 
 model = 'hdemucs_mmi'
 
@@ -28,6 +28,12 @@ class MainWindow(QWidget):
         self.screenWidth = 1080
         self.screenHeight = int((self.screenWidth / 16) * 9)
         self.setGeometry(0, 0, self.screenWidth, self.screenHeight)
+        
+        # Center the window on the screen
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = (screen.width() - self.screenWidth) // 2
+        y = (screen.height() - self.screenHeight) // 2
+        self.move(x, y)
 
         screenLayout = QHBoxLayout()
 
@@ -73,6 +79,7 @@ class MainWindow(QWidget):
         searchLayout.addWidget(self.searchButton)
         searchLayout.addStretch(1)  # Add stretchable space after the search button
         searchLayout.addWidget(self.debugDisplay)
+
 
         self.timer = QTimer(self)
         self.timer.setInterval(800)
@@ -146,10 +153,12 @@ class MainWindow(QWidget):
     
         self.thread = None
 
-    def setDebugText(self):
-        curr_time = self.audio_streamer.get_pos()
-        self.debugDisplay.setText(f"{curr_time / 1000:.2f} Seconds")
+        self.word_level_lyrics = False
 
+    def setDebugText(self):
+        # curr_time = self.audio_streamer.get_pos()
+        # self.debugDisplay.setText(f"{curr_time / 1000:.2f} Seconds")
+        self.debugDisplay.setText(f"{len(self.audio_streamer.buffer)} Bytes")
 
     def onCheckboxChange(self):
         options = [checkbox.text() for checkbox in self.track_checkboxes if checkbox.isChecked()]
@@ -189,7 +198,6 @@ class MainWindow(QWidget):
 
 
     def setup_playback(self, audio_url, thumbnail_url, info_dict, loadingMsg):
-        loadingMsg.accept()
         # Set pixmap to the thumbnail_url
         self.thumbnail = self.get_thumbnail(thumbnail_url)
         self.currentScreen = self.videoLabel
@@ -203,30 +211,55 @@ class MainWindow(QWidget):
         ### Lyric setup
         lyrics = None
         title = info_dict['title']
-        artist = info_dict['artist'][0]
-
-        lyrics = syncedlyrics.search(f"[{title}] [{artist}]", synced_only=True)
+        artist = info_dict['artist'] if type(info_dict['artist']) == str else info_dict['artist'][0]
+        print(f"Searching for lyrics for {title} by {artist}")
+        try:
+            lyrics = syncedlyrics.search(f"[{title}] [{artist}]", synced_only=True)
+        except:
+            lyrics = None
 
         if not lyrics:
             lyrics = 'No lyrics found'
         else:
+            with open('lyrics.txt', 'w') as f:
+                f.write(lyrics)
+
             self.isRenderingLyrics = True
-            tempLyrics = lyrics.splitlines()
-            for i in range(len(tempLyrics)):
-                minutes, seconds = tempLyrics[i][1:9].split(":")
-                minutes, seconds = int(minutes), float(seconds)
-                milliseconds = int(floor((minutes * 60 + seconds) * 1000))
-                tempLyrics[i] = (milliseconds, tempLyrics[i][tempLyrics[i].index(']')+1:].strip())
-            self.lyrics = tempLyrics
+            lyrics = LRCParser(lyrics)
+            lyrics.parse(word_level=self.word_level_lyrics)
+
+            # tempLyrics = lyrics.strip().splitlines()
+            # for i in range(len(tempLyrics)):
+            #     if tempLyrics[i].find(']') == len(tempLyrics[i]) - 1 or tempLyrics[i].find(']') == -1:
+            #         tempLyrics[i] = None
+            #         continue
+                
+            #     if not self.word_level_lyrics:
+            #         tempLyrics[i] = re.sub(r'<\d{2}:\d{2}\.\d{2}>', '', tempLyrics[i])
+            #         minutes, seconds = tempLyrics[i][1:9].split(":")
+            #         minutes, seconds = int(minutes), float(seconds)
+            #         milliseconds = int(floor((minutes * 60 + seconds) * 1000))
+            #         tempLyrics[i] = (milliseconds, tempLyrics[i][tempLyrics[i].index(']')+1:].strip())
+            
+            self.lyrics = [(line.timestamp * 1000, line.text) for line in lyrics.get_lines()]
             self.lyricIndex = 0
             self.lyricsTimer.start()
             self.updateLyrics()
         
         self.isPaused = False
+        loadingMsg.hide()
 
     def onSearchButtonClick(self):
         if self.audio_streamer:
             self.audio_streamer.cleanup()
+            if self.lyricsTimer:
+                self.lyricsTimer.stop()
+            self.isRenderingLyrics = False
+            self.isRenderingVideo = False
+            self.isPaused = False
+            self.lyricIndex = 0
+            self.lyrics = None
+
 
         self.onCheckboxChange()
 
@@ -313,7 +346,7 @@ class MainWindow(QWidget):
             outlineColor = QColor("black")
             
             # Drawing outline for better visibility on complex backgrounds
-            outlineWidth = 5  # Adjust the pen width to the outline thickness
+            outlineWidth = 2  # Adjust the pen width to the outline thickness
             painter.setPen(QPen(outlineColor, outlineWidth))
             for dx, dy in [(-outlineWidth, 0), (outlineWidth, 0), (0, -outlineWidth), (0, outlineWidth),
                    (-outlineWidth, -outlineWidth), (-outlineWidth, outlineWidth), 
