@@ -19,7 +19,7 @@ class LRCParser:
     """
     def __init__(self, lyrics: str):
         self.lyrics = lyrics
-        self.lines: List[LRCLine] = []
+        self.lines: List[LRCLine] = [LRCLine(0, '')]
 
     def parse(self, word_level: bool = False):
         """

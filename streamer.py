@@ -191,6 +191,7 @@ class AudioStreamer:
                 '-acodec', 'pcm_s16le',                                   # Audio codec
                 '-ar', '44100',                                           # Sample rate
                 '-ac', '2',                                               # Number of channels
+                '-af', 'volume=0.8',                                      # Adjust volume to 80%
                 'pipe:1'                                                  # Output to stdout
             ],
             stdout=subprocess.PIPE,
@@ -457,7 +458,7 @@ class AudioStreamer:
         Returns:
             bool: True if playing, False otherwise.
         """
-        return self.pause_event.is_set() and not self.stop_event.is_set()
+        return self.consumer_thread and self.consumer_thread.is_alive()
 
     def handle_signal(self, signum, frame):
         """Handle incoming signals like SIGINT."""
@@ -480,7 +481,34 @@ class AudioStreamer:
             if self.processed_audio:
                 return len(self.processed_audio)
             return 0
-    
+
+    def restart(self):
+        """
+        Restarts the playback from the beginning, with a fresh state.
+        """
+        # Stop any ongoing playback and processing
+        self.stop()
+        
+        # Reset internal state variables
+        self.processed_audio = []  
+        self.full_played_audio = []
+        self.playback_position = 0
+        self.progress = 0
+        self.producer_finished = False
+        self.start_time = None
+        
+        # Re-initialize events
+        self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+        self.pause_event.set()  # Start in unpaused state
+        self.new_data_event = threading.Event()
+        
+        # Reset audio queue
+        self.audio_queue = queue.Queue()
+        
+        # Start the stream again
+        self.start_stream()
+
     def cleanup(self):
         """
         destroys the streamer and frees up resources

@@ -5,7 +5,7 @@ import ytm
 from PyQt6.QtWidgets import (QWidget, QLabel, QApplication, QLineEdit, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QCheckBox, QCompleter,
                              QMessageBox, QMenuBar, QToolBar, QMainWindow)
-from PyQt6.QtCore import QTimer, Qt, QSize
+from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal, QObject
 from PyQt6.QtGui import QPixmap, QImage, QColor, QFont, QPainter, QPen, QIcon, QAction
 import syncedlyrics
 import signal
@@ -25,31 +25,54 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.mainScreen)
         self.setGeometry(0, 0, self.mainScreen.screenWidth, self.mainScreen.screenHeight)
         self._createMenuBar()
+        self.centerOnScreen()
         self.show()
 
+    def centerOnScreen(self):
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = (screen.width() - self.width()) // 2
+        y = (screen.height() - self.height()) // 2
+        self.move(x, y)
+
+    def resizeEvent(self, event):
+        self.centerOnScreen()
+        super().resizeEvent(event)
+
     def _createMenuBar(self):
+        # clear the existing menu bar
+        self.menuBar().clear()
+
         menuBar = self.menuBar()
         # Create a model menu
         self.modelMenu = menuBar.addMenu('Model')
+        self.lyricMenu = menuBar.addMenu('Lyrics')
+        
+        action = self.lyricMenu.addAction('Word Level')
+        action.setCheckable(True)
+        action.setChecked(self.mainScreen.word_level_lyrics)
+        action.triggered.connect(lambda: setattr(self.mainScreen, 'word_level_lyrics', not self.mainScreen.word_level_lyrics))
+
+        self.lyricMenu.addAction('+ 0.5').triggered.connect(self.mainScreen.adjustLyrics)
+        self.lyricMenu.addAction('- 0.5').triggered.connect(self.mainScreen.adjustLyrics)
+
         
         # Add model options to the menu
         self.modelOptions = [
             'hdemucs_mmi', 
             'htdemucs', 
-            'htdemucs_ft',
             'htdemucs_6s', 
             'mdx',
             'mdx_extra',
             'mdx_q',
-            'mdx_extra_q']
+            'mdx_extra_q'
+            ]
         
         for option in self.modelOptions:
-            if option == self.mainScreen.audio_streamer.model:
-                action = self.modelMenu.addAction(option)
-                action.setChecked(True)
-                continue
             action = self.modelMenu.addAction(option)
-            action.triggered.connect(lambda _, option=option: self.mainScreen.change_model(option))
+            action.setCheckable(True)
+            if option == self.mainScreen.audio_streamer.model:
+                action.setChecked(True)
+            action.triggered.connect(lambda _, option=option: self.mainScreen.change_model(option, self._createMenuBar))
 
 class MainScreen(QWidget):
     def __init__(self):
@@ -65,7 +88,6 @@ class MainScreen(QWidget):
         x = (screen.width() - self.screenWidth) // 2
         y = (screen.height() - self.screenHeight) // 2
         self.move(x, y)
-
         screenLayout = QHBoxLayout()
 
         leftScreenLayout = QVBoxLayout()
@@ -169,7 +191,6 @@ class MainScreen(QWidget):
         leftScreenLayout.addWidget(self.videoLabel)
 
         screenLayout.addLayout(leftScreenLayout)
-        # screenLayout.addLayout(lyricBoxLayout)
 
         self.setLayout(screenLayout)
 
@@ -180,9 +201,7 @@ class MainScreen(QWidget):
         self.word_level_lyrics = False
 
     def setDebugText(self):
-        # curr_time = self.audio_streamer.get_pos()
-        # self.debugDisplay.setText(f"{curr_time / 1000:.2f} Seconds")
-        self.debugDisplay.setText(f"{len(self.audio_streamer.buffer)} Bytes")
+        self.debugDisplay.setText(f"Current model: {self.audio_streamer.model}")
 
     def update_checkboxes(self):
         # Clear the existing checkboxes and stretch
@@ -208,10 +227,28 @@ class MainScreen(QWidget):
         if self.audio_streamer:
             self.audio_streamer.change_tracks(options)
 
-    def change_model(self, model):
-        self.audio_streamer.set_model(model)
-        print(self.audio_streamer.selected_tracks)
-        self.update_checkboxes()
+    def change_model(self, model, reset_menu):
+        if self.audio_streamer.is_playing():
+            warning = QMessageBox()
+            warning.setIcon(QMessageBox.Icon.Warning)
+            warning.setText("Changing the model will restart the current playback. Do you want to continue?")
+            warning.setWindowTitle("Warning")
+            warning.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            warning.setDefaultButton(QMessageBox.StandardButton.No)
+            response = warning.exec()
+            if response == QMessageBox.StandardButton.Yes:            
+                self.audio_streamer.set_model(model)
+                print(self.audio_streamer.selected_tracks)
+                self.update_checkboxes()
+                self.audio_streamer.restart()
+
+            reset_menu()
+            
+        else:
+            self.audio_streamer.set_model(model)
+            print(self.audio_streamer.selected_tracks)
+            self.update_checkboxes()
+            reset_menu()
         
 
     def get_thumbnail(self, url):
@@ -263,14 +300,14 @@ class MainScreen(QWidget):
         artist = info_dict['artist'] if type(info_dict['artist']) == str else info_dict['artist'][0]
         print(f"Searching for lyrics for {title} by {artist}")
         try:
-            lyrics = syncedlyrics.search(f"[{title}] [{artist}]", synced_only=True)
+            lyrics = syncedlyrics.search(f"[{title}] [{artist}]", enhanced=True)
         except:
             lyrics = None
 
         if not lyrics:
             lyrics = 'No lyrics found'
         else:
-            with open('lyrics.txt', 'w') as f:
+            with open('lyrics.txt', 'w', encoding='utf-8') as f:
                 f.write(lyrics)
 
             self.isRenderingLyrics = True
@@ -283,7 +320,7 @@ class MainScreen(QWidget):
             self.updateLyrics()
         
         self.isPaused = False
-        loadingMsg.hide()
+        loadingMsg.accept()
 
     def onSearchButtonClick(self):
         if self.audio_streamer:
