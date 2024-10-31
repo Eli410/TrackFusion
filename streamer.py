@@ -119,7 +119,9 @@ class AudioStreamer:
         self.pause_event.set()  # Start in paused state
         self.stop_event = threading.Event()
         self.lock = threading.Lock()  # To protect shared resources
-        # self.start_time = None
+
+        self.info_dict = None
+
         self.process = None
         self.producer_thread = None
         self.consumer_thread = None
@@ -170,8 +172,8 @@ class AudioStreamer:
             'extract_flat': True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(self.youtube_url, download=False)
-            audio_url = info_dict['url']
+            self.info_dict = ydl.extract_info(self.youtube_url, download=False)
+            audio_url = self.info_dict['url']
 
         return audio_url
 
@@ -211,8 +213,7 @@ class AudioStreamer:
             model (str): The name of the processing model to use.
         """
         self.model = model
-        temp = get_model(self.model)
-        self.selected_tracks = list(temp.sources)
+        self.selected_tracks = list(get_model(self.model).sources)
         
         
     def _producer(self):
@@ -496,6 +497,7 @@ class AudioStreamer:
         self.progress = 0
         self.producer_finished = False
         self.start_time = None
+
         
         # Re-initialize events
         self.stop_event = threading.Event()

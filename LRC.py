@@ -7,7 +7,7 @@ class LRCLine:
     """
     def __init__(self, timestamp_ms: int, text: str, word_timings: Optional[List[tuple]] = None):
         self.timestamp_ms = timestamp_ms  # Line-level timestamp in milliseconds
-        self.text = text                  # Lyrics text
+        self.text = re.sub(r'\s{2,}', ' ', text)  # Replace two or more spaces with one space
         self.word_timings = word_timings or []  # List of tuples (word_timestamp_ms, word)
 
     def __repr__(self):
@@ -49,7 +49,8 @@ class LRCParser:
                     clean_text = re.sub(r'<\d{2}:\d{2}\.\d{2}>', '', content).strip()
                     lrc_line = LRCLine(timestamp_ms=int(line_timestamp_ms), text=clean_text)
 
-                self.lines.append(lrc_line)
+                if lrc_line.text:
+                    self.lines.append(lrc_line)
             else:
                 # Ignore lines without valid format
                 continue

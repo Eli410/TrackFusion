@@ -1,7 +1,9 @@
 import sys
 import re
 import cv2
-from ytm.apis import YouTubeMusic
+import io
+from ytmusicapi import YTMusic
+import time
 from PyQt6.QtWidgets import (QWidget, QLabel, QApplication, QLineEdit, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QCheckBox, QCompleter,
                              QMessageBox, QMenuBar, QToolBar, QMainWindow)
@@ -11,21 +13,26 @@ import syncedlyrics
 import signal
 from streamer import AudioStreamer
 
-from qtComponents import AutocompleteDelegate, AutocompleteModel, ytdl_Worker, VideoWindow
+from qtComponents import AutocompleteDelegate, AutocompleteModel, ytdl_Worker, VideoWindow, ExportPopup
 import requests
 import numpy as np
 from LRC import LRCParser
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from pydub import AudioSegment
+import soundfile as sf
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.export_popup = None
         self.setWindowTitle("TrackFusion")
         self.mainScreen = MainScreen()
         self.setCentralWidget(self.mainScreen)
         self.setGeometry(0, 0, self.mainScreen.screenWidth, self.mainScreen.screenHeight)
         self._createMenuBar()
         self.centerOnScreen()
+        self.applyDarkMode()
         self.show()
 
     def centerOnScreen(self):
@@ -33,10 +40,6 @@ class MainWindow(QMainWindow):
         x = (screen.width() - self.width()) // 2
         y = (screen.height() - self.height()) // 2
         self.move(x, y)
-
-    def resizeEvent(self, event):
-        self.centerOnScreen()
-        super().resizeEvent(event)
 
     def _createMenuBar(self):
         # clear the existing menu bar
@@ -46,15 +49,17 @@ class MainWindow(QMainWindow):
         # Create a model menu
         self.modelMenu = menuBar.addMenu('Model')
         self.lyricMenu = menuBar.addMenu('Lyrics')
+        self.exportMenu = menuBar.addMenu('Export')
         
         action = self.lyricMenu.addAction('Word Level')
         action.setCheckable(True)
         action.setChecked(self.mainScreen.word_level_lyrics)
         action.triggered.connect(lambda: setattr(self.mainScreen, 'word_level_lyrics', not self.mainScreen.word_level_lyrics))
 
-        self.lyricMenu.addAction('+ 0.5').triggered.connect(self.mainScreen.adjustLyrics)
-        self.lyricMenu.addAction('- 0.5').triggered.connect(self.mainScreen.adjustLyrics)
+        self.lyricMenu.addAction('+ 0.5 (click when lyrics are faster)').triggered.connect(self.mainScreen.adjustLyrics)
+        self.lyricMenu.addAction('- 0.5 (click when lyrics are slower)').triggered.connect(self.mainScreen.adjustLyrics)
 
+        self.exportMenu.addAction('Export').triggered.connect(lambda: self.export())
         
         # Add model options to the menu
         self.modelOptions = [
@@ -73,6 +78,157 @@ class MainWindow(QMainWindow):
             if option == self.mainScreen.audio_streamer.model:
                 action.setChecked(True)
             action.triggered.connect(lambda _, option=option: self.mainScreen.change_model(option, self._createMenuBar))
+
+    def export(self):
+        if not self.mainScreen.audio_streamer.processed_audio:
+            warning = QMessageBox()
+            warning.setIcon(QMessageBox.Icon.Warning)
+            warning.setText("No audio to export.")
+            warning.setWindowTitle("Warning")
+            warning.exec()
+            return
+        if not self.mainScreen.audio_streamer.producer_finished:
+            warning = QMessageBox()
+            warning.setIcon(QMessageBox.Icon.Warning)
+            warning.setText("Please wait for the audio to finish processing.")
+            warning.setWindowTitle("Warning")
+            warning.exec()
+            return
+
+        self.export_popup = ExportPopup(self.mainScreen.track_checkboxes, self.export_track)
+        self.export_popup.show()
+
+    def export_track(self, tracks, extension, path):
+        # Initialize a list to hold the mixed audio samples
+        mixed_audio = []
+        
+        # Determine the actual sample rate and channels from processed_audio if possible
+        # For this example, we'll assume 44100 Hz and 2 channels (stereo)
+        sample_rate = 44100
+        channels = 2  # Adjust based on your actual data
+        
+        for chunk in self.mainScreen.audio_streamer.processed_audio:
+            # List to hold samples from each track
+            track_samples = []
+            for track in tracks:
+                # Get the bytes data for the track
+                track_data = chunk[track]
+                # Convert bytes to numpy array of int16
+                samples = np.frombuffer(track_data, dtype=np.int16)
+                # Reshape to separate channels if stereo
+                if channels == 2:
+                    samples = samples.reshape(-1, 2)
+                else:
+                    samples = samples.reshape(-1, 1)
+                track_samples.append(samples)
+            
+            if not track_samples:
+                continue
+            
+            # Stack samples to shape (num_tracks, num_samples, channels)
+            stacked_samples = np.stack(track_samples, axis=0)
+            
+            # Sum across tracks to mix
+            mixed_samples = np.sum(stacked_samples, axis=0)
+            
+            # Prevent overflow by clipping the values
+            mixed_samples = np.clip(mixed_samples, -32768, 32767).astype(np.int16)
+            
+            mixed_audio.append(mixed_samples)
+        
+        if not mixed_audio:
+            # Show an error message if there's no audio to export
+            QMessageBox.critical(self, "Error", "No mixed audio available to export.")
+            return
+        
+        # Concatenate all mixed samples
+        mixed_audio = np.concatenate(mixed_audio, axis=0)
+        
+        # Flatten the array if mono, or keep as 2D for stereo
+        if channels == 2:
+            mixed_audio = mixed_audio.flatten()
+        
+        # Output file path
+        output_file = f"{path}/{self.mainScreen.current_song}({'+'.join(tracks)}).{extension}"
+        
+        try:
+            if extension.lower() in ['wav', 'flac']:
+                # For stereo, ensure data is 2D
+                if channels == 2:
+                    mixed_audio_reshaped = mixed_audio.reshape(-1, 2)
+                else:
+                    mixed_audio_reshaped = mixed_audio
+                # Use soundfile to write WAV or FLAC files
+                sf.write(output_file, mixed_audio_reshaped, samplerate=sample_rate, subtype='PCM_16')
+            elif extension.lower() in ['mp3', 'aac']:
+                # Use pydub to export to mp3 or aac
+                audio_segment = AudioSegment.from_raw(
+                    io.BytesIO(mixed_audio.tobytes()),
+                    sample_width=2,  # 16-bit audio
+                    frame_rate=sample_rate,
+                    channels=channels
+                )
+                audio_segment.export(output_file, format=extension)
+            else:
+                # Unsupported format
+                raise ValueError(f"Unsupported audio format: {extension}")
+        
+        except Exception as e:
+            # Handle exceptions and show error message
+            QMessageBox.critical(self, "Export Error", str(e))
+
+
+    def applyDarkMode(self):
+        dark_stylesheet = """
+        QMainWindow {
+            background-color: #2b2b2b;
+        }
+        QWidget {
+            background-color: #2b2b2b;
+            color: #ffffff;
+        }
+        QLineEdit {
+            background-color: #3c3c3c;
+            color: #ffffff;
+            border: 1px solid #5a5a5a;
+            border-radius: 5px;
+        }
+        QPushButton {
+            background-color: #3c3c3c;
+            color: #ffffff;
+            border: 1px solid #5a5a5a;
+            border-radius: 5px;
+        }
+        QLabel {
+            color: #ffffff;
+        }
+        QMenuBar {
+            background-color: #3c3c3c;
+            color: #ffffff;
+        }
+        QMenuBar::item {
+            background-color: #3c3c3c;
+            color: #ffffff;
+        }
+        QMenuBar::item:selected {
+            background-color: #5a5a5a;
+        }
+        QMenu {
+            background-color: #3c3c3c;
+            color: #ffffff;
+        }
+        QMenu::item:selected {
+            background-color: #5a5a5a;
+        }
+        QCheckBox {
+            color: #ffffff;
+        }
+        QCompleter {
+            background-color: #3c3c3c;
+            color: #ffffff;
+        }
+        """
+        self.setStyleSheet(dark_stylesheet)
 
 class MainScreen(QWidget):
     def __init__(self):
@@ -120,18 +276,18 @@ class MainScreen(QWidget):
         self.searchButton.setFixedHeight(50)
         self.searchButton.clicked.connect(self.onSearchButtonClick)
 
-        self.debugDisplay = QLabel(self)
-        self.debugDisplay.setFixedWidth(200)
-        self.debugDisplay.setFixedHeight(50)
+        # self.debugDisplay = QLabel(self)
+        # self.debugDisplay.setFixedWidth(200)
+        # self.debugDisplay.setFixedHeight(50)
 
-        self.debugTimer = QTimer(self)
-        self.debugTimer.setInterval(10)
-        self.debugTimer.timeout.connect(self.setDebugText)
-        self.debugTimer.start()
+        # self.debugTimer = QTimer(self)
+        # self.debugTimer.setInterval(10)
+        # self.debugTimer.timeout.connect(self.setDebugText)
+        # self.debugTimer.start()
+        # searchLayout.addWidget(self.debugDisplay)
 
         searchLayout.addWidget(self.searchButton)
         searchLayout.addStretch(1)  # Add stretchable space after the search button
-        searchLayout.addWidget(self.debugDisplay)
 
 
         self.timer = QTimer(self)
@@ -145,7 +301,7 @@ class MainScreen(QWidget):
         
         # Connect textChanged signal to restart timer
         self.searchBar.textChanged.connect(self.on_text_changed)
-
+        self.current_song = None
 
         # Initialize Completer
         self.completer = QCompleter(self)
@@ -172,7 +328,7 @@ class MainScreen(QWidget):
         
         self.videoLabel = VideoWindow(self)
         self.videoLabel.clicked.connect(self.togglePlayPause)
-
+        self.thumbnail_url = None
 
         self.isPaused = False
         self.video = None
@@ -194,14 +350,31 @@ class MainScreen(QWidget):
 
         self.setLayout(screenLayout)
 
-        self.ytm_api = YouTubeMusic()
-    
+        self.ytm_api = YTMusic()
+        self.last_resize_time = time.time()
+
         self.thread = None
 
         self.word_level_lyrics = False
 
+        self.videoLabel.resizeEvent = self.onVideoLabelResize
+
+    def onVideoLabelResize(self, event):
+        current_time = time.time()
+        # Check if at least 0.5 seconds have passed since the last resize
+        if current_time - self.last_resize_time > 0.5:
+            if self.thumbnail_url:
+                self.update_video()
+                self.last_resize_time = current_time  # Update the last resize time
+        event.accept()
+
+        
     def setDebugText(self):
-        self.debugDisplay.setText(f"Current model: {self.audio_streamer.model}")
+        text = ''
+        text += f"Current model: {self.audio_streamer.model}\n"
+        text += f"{self.current_song if self.current_song else ''}\n"
+
+        self.debugDisplay.setText(text)
 
     def update_checkboxes(self):
         # Clear the existing checkboxes and stretch
@@ -270,7 +443,7 @@ class MainScreen(QWidget):
         if channels == 3:  # Check again, just in case
             aspect_ratio = width / height
             new_width = self.videoLabel.width()
-            new_height = int(new_width / aspect_ratio)
+            new_height = self.videoLabel.height()
             
             # Resize the image
             image = cv2.resize(image, (new_width, new_height))
@@ -282,9 +455,14 @@ class MainScreen(QWidget):
             frameImagePixmap = QPixmap.fromImage(qimage)
             return frameImagePixmap
 
+    def update_video(self):
+        self.thumbnail = self.get_thumbnail(self.thumbnail_url)
+        # self.currentScreen = self.videoLabel
+        self.videoLabel.setPixmap(self.thumbnail)
 
     def setup_playback(self, audio_url, thumbnail_url, info_dict, loadingMsg):
         # Set pixmap to the thumbnail_url
+        self.thumbnail_url = thumbnail_url
         self.thumbnail = self.get_thumbnail(thumbnail_url)
         self.currentScreen = self.videoLabel
         self.videoLabel.setPixmap(self.thumbnail)
@@ -299,10 +477,16 @@ class MainScreen(QWidget):
         title = info_dict['title']
         artist = info_dict['artist'] if type(info_dict['artist']) == str else info_dict['artist'][0]
         print(f"Searching for lyrics for {title} by {artist}")
-        try:
-            lyrics = syncedlyrics.search(f"[{title}] [{artist}]", enhanced=True)
-        except:
-            lyrics = None
+        self.current_song = title
+        def search_lyrics():
+            return syncedlyrics.search(f"[{title}] [{artist}]", enhanced=True)
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(search_lyrics)
+            try:
+                lyrics = future.result(timeout=3)
+            except (TimeoutError, Exception):
+                lyrics = None
 
         if not lyrics:
             lyrics = 'No lyrics found'
@@ -455,11 +639,12 @@ class MainScreen(QWidget):
         if text:
             try:
                 # suggestion = self.ytm_api.search_videos(text)['items'][:5]
-                suggestion = (self.ytm_api.search_songs(text)['items'][:10])
+                suggestion = [item for item in self.ytm_api.search(text) if item['resultType'] == 'song']
+                # suggestions = []
         
                 suggestions = []
                 for song in suggestion:
-                    song_name = song.get('name')
+                    song_name = song.get('title')
                     artist_name = song.get('artists', [{}])[0].get('name')
                     display_text = f"{song_name} - {artist_name}" if artist_name else song_name
                     suggestions.append((display_text, song.get('videoId', song.get('id'))))
@@ -467,7 +652,7 @@ class MainScreen(QWidget):
                 self.completer.complete()
             except Exception as e:
                 print(f"Error searching for songs: {e}")
-                self.ytm_api = ytm.YouTubeMusic()
+                self.ytm_api = YTMusic()
                 suggestion = []
     
     
