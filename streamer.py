@@ -9,7 +9,7 @@ from pathlib import Path
 import torch as th
 from demucs.apply import apply_model, BagOfModels
 from demucs.htdemucs import HTDemucs
-from demucs.pretrained import get_model, ModelLoadingError
+from model import get_model, ModelLoadingError
 from dora.log import fatal
 import torch
 import numpy as np

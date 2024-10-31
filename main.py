@@ -1,7 +1,7 @@
 import sys
 import re
 import cv2
-import ytm
+from ytm.apis import YouTubeMusic
 from PyQt6.QtWidgets import (QWidget, QLabel, QApplication, QLineEdit, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QCheckBox, QCompleter,
                              QMessageBox, QMenuBar, QToolBar, QMainWindow)
@@ -194,7 +194,7 @@ class MainScreen(QWidget):
 
         self.setLayout(screenLayout)
 
-        self.ytm_api = ytm.YouTubeMusic()
+        self.ytm_api = YouTubeMusic()
     
         self.thread = None
 
@@ -243,7 +243,7 @@ class MainScreen(QWidget):
                 self.audio_streamer.restart()
 
             reset_menu()
-            
+
         else:
             self.audio_streamer.set_model(model)
             print(self.audio_streamer.selected_tracks)
