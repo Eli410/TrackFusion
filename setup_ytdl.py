@@ -1,14 +1,12 @@
 import yt_dlp
+from pathlib import Path
 
 
 def get_video_info(video_id):
     # Define the yt-dlp options
     ydl_opts = {
-        'username': 'oauth2',
-        'password': '',
         'skip_download': True,  # Skip the actual download of the video
         'extract_flat': 'in_playlist',  # Extract information without actually downloading
-        'force_generic_extractor': True,  # Force the generic extractor
     }
 
     # Use yt-dlp to extract information
