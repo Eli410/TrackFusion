@@ -475,7 +475,12 @@ class MainScreen(QWidget):
         ### Lyric setup
         lyrics = None
         title = info_dict['title']
-        artist = info_dict['artist'] if type(info_dict['artist']) == str else info_dict['artist'][0]
+        try:
+            artist = info_dict['artist'] if type(info_dict['artist']) == str else info_dict['artist'][0]
+        except KeyError:
+            artist = 'Unknown Artist'
+
+        # artist = info_dict['artist'] if type(info_dict['artist']) == str else info_dict['artist'][0]
         print(f"Searching for lyrics for {title} by {artist}")
         self.current_song = title
         def search_lyrics():
