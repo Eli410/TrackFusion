@@ -525,16 +525,26 @@ class MainScreen(QWidget):
 
         self.onCheckboxChange()
 
-        youTubeLinkRegex = re.compile(r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|embed/|v/)?([A-Za-z0-9_-]{11})(&.*)*$') #Test Later
+        youTubeLinkRegex = re.compile(r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|embed/|v/)?([A-Za-z0-9_-]{11})(&.*)*$|^([A-Za-z0-9_-]{11})$') #Test Later
 
         if (youTubeLinkRegex.fullmatch(self.searchBar.text())):
-            loadingMsg = QMessageBox()
-            loadingMsg.setIcon(QMessageBox.Icon.Information)
-            loadingMsg.setText("Loading... Please wait.")
-            loadingMsg.show()  # Show the loading message
-            self.thread = ytdl_Worker(self.searchBar.text(), loadingMsg)
-            self.thread.finished.connect(self.setup_playback)  # Connect the finished signal to the onFinished slot
-            self.thread.start()
+            # Extract video ID from the input
+            video_id_match = re.search(r'([A-Za-z0-9_-]{11})', self.searchBar.text())
+            if video_id_match:
+                video_id = video_id_match.group(1)
+                # If input is just the ID, construct the full URL
+                if len(self.searchBar.text()) == 11:
+                    full_url = f'https://www.youtube.com/watch?v={video_id}'
+                else:
+                    full_url = self.searchBar.text()
+                
+                loadingMsg = QMessageBox()
+                loadingMsg.setIcon(QMessageBox.Icon.Information)
+                loadingMsg.setText("Loading... Please wait.")
+                loadingMsg.show()  # Show the loading message
+                self.thread = ytdl_Worker(full_url, loadingMsg)
+                self.thread.finished.connect(self.setup_playback)  # Connect the finished signal to the onFinished slot
+                self.thread.start()
         else:
             # show pyqt error dialog
             error_dialog = QMessageBox(self)
